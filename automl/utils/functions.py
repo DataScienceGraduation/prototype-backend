@@ -1,25 +1,28 @@
-import pandas as pd
 import numpy as np
 from pandas import DataFrame
-from sklearn.decomposition import PCA
-from sklearn.model_selection import train_test_split
-from sklearn.ensemble import RandomForestClassifier
 from sklearn.base import ClassifierMixin
-from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
 from sklearn.ensemble import IsolationForest
-from sklearn.preprocessing import RobustScaler
-from sklearn.impute import KNNImputer, IterativeImputer
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.experimental import enable_iterative_imputer
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+import xgboost as xgb
 from sklearn.preprocessing import LabelEncoder
+from sklearn.preprocessing import StandardScaler
+import pandas as pd
+from sklearn import svm
+
 
 # Preprocess function
-def preprocess(df: DataFrame) -> DataFrame:    
-
+def preprocess(df: DataFrame) -> DataFrame:
     # Step 1: Remove duplicates
     try:
         df = df.drop_duplicates()
     except Exception as e:
         print(f"Error in removing duplicates: {e}")
-    
+
     # Step 2: Identify constant columns
     try:
         constant_columns = [col for col in df.columns if df[col].nunique() == 1]
@@ -50,9 +53,9 @@ def preprocess(df: DataFrame) -> DataFrame:
 
     # Step 6: Handle high cardinality categorical columns
     try:
-        high_cardinality_cols = [col for col in df.select_dtypes(include=['object']).columns 
+        high_cardinality_cols = [col for col in df.select_dtypes(include=['object']).columns
                                  if df[col].nunique() / len(df) >= 0.9]
-        
+
         df.drop(columns=high_cardinality_cols, inplace=True)
     except Exception as e:
         print(f"Error in handling high cardinality categorical columns: {e}")
@@ -89,14 +92,13 @@ def preprocess(df: DataFrame) -> DataFrame:
     except Exception as e:
         print(f"Error in removing remaining null values: {e}")
 
-
     df_cleaned = df
     return df_cleaned
 
 
 # Feature Engineering function
 def featureEngineer(df: DataFrame, target_variable: str) -> DataFrame:
-    # 1. Removing highly correlated features
+    # # 1. Removing highly correlated features
     try:
         numerical_columns = df.select_dtypes(include=['int64', 'float64']).columns
         corr_matrix = df[numerical_columns].corr().abs()
@@ -117,7 +119,8 @@ def featureEngineer(df: DataFrame, target_variable: str) -> DataFrame:
                 columns_to_drop.append(col1)
             else:
                 columns_to_drop.append(col2)
-        df.drop(columns_to_drop, axis=1, inplace=True)
+
+        df.drop(list(set(columns_to_drop)), axis=1, inplace=True)
     except Exception as e:
         print(f"Error in creating the correlation matrix: {e}")
 
@@ -141,16 +144,52 @@ def featureEngineer(df: DataFrame, target_variable: str) -> DataFrame:
         df_pca = pd.DataFrame(df_transformed, columns=[f'PC{i + 1}' for i in range(best_components[0])])
 
         # Optionally concatenate the target variable back to the PCA DataFrame if needed
-        df_final = pd.concat([df_pca, df[target_variable].reset_index(drop=True)], axis=1)
-        return df_final
+        df = pd.concat([df_pca, df[target_variable].reset_index(drop=True)], axis=1)
 
     except Exception as e:
-       print(f"Error Applying PCA: {e}")
+        print(f"Error Applying PCA: {e}")
 
     return df
 
 
 # Model Selection function
-def selectBestModel(df: DataFrame, target_variable_name: str) -> ClassifierMixin:
-    model = RandomForestClassifier()
-    return model
+def selectBestModel(df: DataFrame, target_variable: str) -> ClassifierMixin:
+    models = {
+        'Random Forest': RandomForestClassifier(n_estimators=100, random_state=42),
+        'XGBoost': xgb.XGBClassifier(),
+        'SVM (Linear)': svm.SVC(kernel='linear', probability=True),
+        'SVM (RBF)': svm.SVC(kernel='rbf', probability=True)
+    }
+
+    # Add Logistic Regression if binary classification
+    if len(df[target_variable].unique()) == 2:
+        models['Logistic Regression'] = LogisticRegression(max_iter=1000)
+
+    # Prepare the data
+    X = df.drop(target_variable, axis=1)
+    y = df[target_variable]
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+    best_model = None
+    best_accuracy_score = 0
+
+    # Train and evaluate each model
+    for model_name, model in models.items():
+        # Fit the model
+        model.fit(X_train, y_train)
+
+        # Predict on the test set
+        y_pred = model.predict(X_test)
+
+        # Calculate F1 Score
+        accuracy = accuracy_score(y_test, y_pred)
+
+        print(f"{model_name} Accuracy: {accuracy:.4f}")
+
+        # Update best model based on Accuracy score
+        if accuracy > best_accuracy_score:
+            best_accuracy_score = accuracy
+            best_model = model
+
+    print(f"Best Model: {best_model.__class__.__name__} with Accuracy Score: {best_accuracy_score:.4f}")
+    return best_model
