@@ -4,6 +4,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.http import JsonResponse
 from automl.models import ModelEntry
 import pandas as pd
+from automl.tasks import train_model_task
 
 # Create your views here.
 @csrf_exempt
@@ -55,6 +56,9 @@ def trainModel(request):
         entry.target_variable = data['target_variable']
         entry.status = 'Model Training'
         entry.save()
+
+        train_model_task.delay(entry.id)
+
         return JsonResponse({'success': True}, status=200)
     except Exception as e:
         print(f"Error in training model: {e}")

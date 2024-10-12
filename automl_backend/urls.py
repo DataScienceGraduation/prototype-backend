@@ -16,9 +16,10 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.urls import path
-from automl.views import loadData
+from automl.views import loadData, trainModel
 
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('loadData/', loadData),
+    path('trainModel/', trainModel),
 ]

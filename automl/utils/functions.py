@@ -5,13 +5,9 @@ from sklearn.decomposition import PCA
 from sklearn.ensemble import IsolationForest
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
-from sklearn.experimental import enable_iterative_imputer
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
 import xgboost as xgb
-from sklearn.preprocessing import RobustScaler
-from sklearn.experimental import enable_iterative_imputer
-from sklearn.impute import KNNImputer, IterativeImputer
 from sklearn.preprocessing import LabelEncoder
 from sklearn.preprocessing import StandardScaler
 import pandas as pd
@@ -19,7 +15,7 @@ from sklearn import svm
 
 
 # Preprocess function
-def preprocess(df: DataFrame) -> DataFrame:
+def preprocess(df: DataFrame, target_variable: str) -> DataFrame:
     # Step 1: Remove duplicates
     try:
         df = df.drop_duplicates()
@@ -67,6 +63,10 @@ def preprocess(df: DataFrame) -> DataFrame:
     try:
         numerical_cols = df.select_dtypes(include=['float64', 'int64']).columns
         scaler = StandardScaler()
+        
+        numerical_cols = [df.select_dtypes(include=['float64', 'int64']).columns]
+        numerical_cols.remove(target_variable)
+
         df[numerical_cols] = scaler.fit_transform(df[numerical_cols])
     except Exception as e:
         print(f"Error in scaling numerical features: {e}")
@@ -149,6 +149,10 @@ def featureEngineer(df: DataFrame, target_variable: str) -> DataFrame:
         # Optionally concatenate the target variable back to the PCA DataFrame if needed
         df = pd.concat([df_pca, df[target_variable].reset_index(drop=True)], axis=1)
 
+        # Scale the PCA features
+        scaler = StandardScaler()
+        df.iloc[:, :-1] = scaler.fit_transform(df.iloc[:, :-1])
+
     except Exception as e:
         print(f"Error Applying PCA: {e}")
 
@@ -160,8 +164,8 @@ def selectBestModel(df: DataFrame, target_variable: str) -> ClassifierMixin:
     models = {
         'Random Forest': RandomForestClassifier(n_estimators=100, random_state=42),
         'XGBoost': xgb.XGBClassifier(),
-        'SVM (Linear)': svm.SVC(kernel='linear', probability=True),
-        'SVM (RBF)': svm.SVC(kernel='rbf', probability=True)
+        'SVM (Linear)': svm.SVC(kernel='linear', probability=True, max_iter=1000),
+        'SVM (RBF)': svm.SVC(kernel='rbf', probability=True, max_iter=1000)
     }
 
     # Add Logistic Regression if binary classification
@@ -195,4 +199,4 @@ def selectBestModel(df: DataFrame, target_variable: str) -> ClassifierMixin:
             best_model = model
 
     print(f"Best Model: {best_model.__class__.__name__} with Accuracy Score: {best_accuracy_score:.4f}")
-    return best_model
+    return best_model, best_accuracy_score

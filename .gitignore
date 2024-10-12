@@ -3,3 +3,10 @@
 
 */__pycache__/*
 *.pyc
+
+/data/*
+/models/*
+
+/db.sqlite3
+/.idea
+/.vscode
