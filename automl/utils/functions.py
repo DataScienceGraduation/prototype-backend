@@ -8,6 +8,7 @@ from sklearn.base import ClassifierMixin
 from sklearn.preprocessing import StandardScaler
 from sklearn.ensemble import IsolationForest
 from sklearn.preprocessing import RobustScaler
+from sklearn.experimental import enable_iterative_imputer
 from sklearn.impute import KNNImputer, IterativeImputer
 from sklearn.preprocessing import LabelEncoder
 

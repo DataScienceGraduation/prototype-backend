@@ -1,7 +1,9 @@
 from django.test import TestCase
-from utils.functions import preprocess
+import pytest
+from automl.utils.functions import preprocess
+from sklearn.experimental import enable_iterative_imputer
 import pandas as pd
-# Create your tests here.
+# Create your tests here.pip
 
 @pytest.fixture
 def sample_data():
