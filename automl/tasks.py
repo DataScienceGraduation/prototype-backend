@@ -30,5 +30,5 @@ def train_model_task(entry_id):
         joblib.dump(model, f'models/{entry.id}.pkl')
     except Exception as e:
         print(f"Error during model training: {e}")
-        entry.status = 'Training Failed'
+        entry.status = 'Failed'
         entry.save()
