@@ -7,6 +7,7 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.ensemble import IsolationForest
 from sklearn.preprocessing import RobustScaler
 from sklearn.impute import KNNImputer, IterativeImputer
+from sklearn.preprocessing import LabelEncoder
 
 # Preprocess function
 def preprocess(df: DataFrame) -> DataFrame:    
@@ -70,6 +71,15 @@ def preprocess(df: DataFrame) -> DataFrame:
         df = df[outliers != -1]
     except Exception as e:
         print(f"Error in removing outliers using Isolation Forest: {e}")
+
+    # Step 9: Label encode categorical columns
+    try:
+        categorical_cols = df.select_dtypes(include=['object']).columns
+        le = LabelEncoder()
+        for col in categorical_cols:
+            df[col] = le.fit_transform(df[col])
+    except Exception as e:
+        print(f"Error in label encoding categorical columns: {e}")
 
     # Final Step: Remove any remaining null values
     try:
