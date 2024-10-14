@@ -38,7 +38,10 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'automl',
+<<<<<<< HEAD
     'corsheaders',
+=======
+>>>>>>> 4ebae3c7ec1692c9143a4442f160b26fea23dcb8
 ]
 
 MIDDLEWARE = [
@@ -49,11 +52,14 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+<<<<<<< HEAD
     'corsheaders.middleware.CorsMiddleware',
 ]
 
 CORS_ALLOWED_ORIGINS = [
     'http://localhost:3000',
+=======
+>>>>>>> 4ebae3c7ec1692c9143a4442f160b26fea23dcb8
 ]
 
 ROOT_URLCONF = 'automl_backend.urls'
