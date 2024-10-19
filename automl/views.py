@@ -5,6 +5,8 @@ from django.http import JsonResponse
 from automl.models import ModelEntry
 import pandas as pd
 from automl.tasks import train_model_task
+import joblib
+import json
 
 # Create your views here.
 @csrf_exempt
@@ -89,4 +91,26 @@ def getAllModels(request):
         return response
     except Exception as e:
         print(f"Error in getting all models: {e}")
+        return JsonResponse({'success': False, 'message': 'There was an error'}, status=500)
+    
+
+@csrf_exempt
+@require_POST
+def infer(request):
+    try:
+        data = request.POST
+        entry = ModelEntry.objects.get(id=data['id'])
+        model = joblib.load(f'models/{entry.id}.pkl')
+        pl = joblib.load(f'pipelines/{entry.id}.pkl')
+        data = json.loads(data['data'])
+        df = pd.DataFrame([data])
+        df = df.reset_index(drop=True)
+        print(df)
+        print("Transformed Data")
+        prediction = model.predict(df)
+        print(f"Prediction: {prediction}")
+        finalPrediction = prediction[0]
+        return JsonResponse({'success': True, 'prediction': str(finalPrediction)}, status=200)
+    except Exception as e:
+        print(f"Error in inference: {e}")
         return JsonResponse({'success': False, 'message': 'There was an error'}, status=500)

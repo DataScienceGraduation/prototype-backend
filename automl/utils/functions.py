@@ -1,165 +1,233 @@
 import numpy as np
-from pandas import DataFrame
-from sklearn.base import ClassifierMixin
-from sklearn.decomposition import PCA
-from sklearn.ensemble import IsolationForest
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import train_test_split
-from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
-import xgboost as xgb
-from sklearn.preprocessing import LabelEncoder
-from sklearn.preprocessing import StandardScaler
 import pandas as pd
+from sklearn.base import BaseEstimator, TransformerMixin, ClassifierMixin
+from sklearn.pipeline import Pipeline
+from sklearn.compose import ColumnTransformer, make_column_selector
+from sklearn.preprocessing import StandardScaler, OrdinalEncoder, LabelEncoder
+from sklearn.impute import SimpleImputer
+from sklearn.ensemble import IsolationForest, RandomForestClassifier
+from sklearn.model_selection import GridSearchCV, RandomizedSearchCV, train_test_split
+from sklearn.metrics import accuracy_score
 from sklearn import svm
+from sklearn.linear_model import LogisticRegression
+import joblib
+import xgboost as xgb
+from pandas import DataFrame
 
 
-# Preprocess function
-def preprocess(df: DataFrame, target_variable: str) -> DataFrame:
-    # Step 1: Remove duplicates
-    try:
-        df = df.drop_duplicates()
-    except Exception as e:
-        print(f"Error in removing duplicates: {e}")
+class RemoveDuplicates(BaseEstimator, TransformerMixin):
+    def fit(self, X, y=None):
+        self.unique_indices_ = X.drop_duplicates().index
+        return self
+    
+    def transform(self, X):
+        return X.loc[self.unique_indices_]
 
-    # Step 2: Identify constant columns
-    try:
-        constant_columns = [col for col in df.columns if df[col].nunique() == 1]
-        df.drop(columns=constant_columns, inplace=True)
-    except Exception as e:
-        print(f"Error in identifying constant columns: {e}")
+class DropHighMissing(BaseEstimator, TransformerMixin):
+    def __init__(self, threshold=0.4):
+        self.threshold = threshold
+    
+    def fit(self, X, y=None):
+        self.columns_to_drop_ = X.columns[X.isnull().mean() > self.threshold].tolist()
+        return self
+    
+    def transform(self, X):
+        return X.drop(columns=self.columns_to_drop_, errors='ignore')
 
-    # Step 3: Drop columns with too many missing values
-    try:
-        threshold = 0.4
-        df.dropna(axis=1, thresh=int((1 - threshold) * len(df)), inplace=True)
-    except Exception as e:
-        print(f"Error in dropping columns with missing values: {e}")
+class DropHighCardinality(BaseEstimator, TransformerMixin):
+    def __init__(self, cardinality_threshold=0.9):
+        self.cardinality_threshold = cardinality_threshold
+    
+    def fit(self, X, y=None):
+        self.columns_to_drop_ = []
+        for col in X.select_dtypes(include=['object', 'category']).columns:
+            if X[col].nunique() / X.shape[0] >= self.cardinality_threshold:
+                self.columns_to_drop_.append(col)
+        return self
+    
+    def transform(self, X):
+        return X.drop(columns=self.columns_to_drop_, errors='ignore')
 
-    # Step 4: Impute missing values for numerical columns
-    try:
-        for col in df.select_dtypes(include=['float64', 'int64']).columns:
-            df[col].fillna(df[col].median(), inplace=True)  # Impute with median
-    except Exception as e:
-        print(f"Error in imputing missing values for numerical columns: {e}")
+class RemoveHighlyCorrelated(BaseEstimator, TransformerMixin):
+    def __init__(self, target_variable=None, correlation_threshold=0.8):
+        self.correlation_threshold = correlation_threshold
+        self.target_variable = target_variable
+    
+    def fit(self, X, y=None):
+        # Since this transformer needs both X and y, we ensure y is provided
+        if y is None:
+            y = X[self.target_variable]
 
-    # Step 5: Impute missing values for categorical columns
-    try:
-        for col in df.select_dtypes(include=['object']).columns:
-            df[col].fillna(df[col].mode()[0], inplace=True)  # Impute with mode
-    except Exception as e:
-        print(f"Error in imputing missing values for categorical columns: {e}")
+        # Combine X and y for correlation calculation
+        df = X.copy()
+        df[self.target_variable] = y
 
-    # Step 6: Handle high cardinality categorical columns
-    try:
-        high_cardinality_cols = [col for col in df.select_dtypes(include=['object']).columns
-                                 if df[col].nunique() / len(df) >= 0.9]
-
-        df.drop(columns=high_cardinality_cols, inplace=True)
-    except Exception as e:
-        print(f"Error in handling high cardinality categorical columns: {e}")
-
-    # Step 7: Scale numerical features
-    try:
-        numerical_cols = df.select_dtypes(include=['float64', 'int64']).columns
-        scaler = StandardScaler()
-        
-        numerical_cols = [df.select_dtypes(include=['float64', 'int64']).columns]
-        numerical_cols.remove(target_variable)
-
-        df[numerical_cols] = scaler.fit_transform(df[numerical_cols])
-    except Exception as e:
-        print(f"Error in scaling numerical features: {e}")
-
-    # Step 8: Remove outliers using Isolation Forest
-    try:
-        numerical_cols = df.select_dtypes(include=['float64', 'int64']).columns
-        iso_forest = IsolationForest(contamination=0.05)
-        outliers = iso_forest.fit_predict(df[numerical_cols])
-        df = df[outliers != -1]
-    except Exception as e:
-        print(f"Error in removing outliers using Isolation Forest: {e}")
-
-    # Step 9: Label encode categorical columns
-    try:
-        categorical_cols = df.select_dtypes(include=['object']).columns
-        le = LabelEncoder()
-        for col in categorical_cols:
-            df[col] = le.fit_transform(df[col])
-    except Exception as e:
-        print(f"Error in label encoding categorical columns: {e}")
-
-    # Final Step: Remove any remaining null values
-    try:
-        df.dropna(inplace=True)
-    except Exception as e:
-        print(f"Error in removing remaining null values: {e}")
-
-    df_cleaned = df
-    return df_cleaned
-
-
-# Feature Engineering function
-def featureEngineer(df: DataFrame, target_variable: str) -> DataFrame:
-    # # 1. Removing highly correlated features
-    try:
+        # Find numerical columns
         numerical_columns = df.select_dtypes(include=['int64', 'float64']).columns
+
+        # Correlation matrix
         corr_matrix = df[numerical_columns].corr().abs()
-
         upper_tri = corr_matrix.where(np.triu(np.ones(corr_matrix.shape), k=1).astype(bool))
+        
+        self.columns_to_drop_ = []
 
-        high_corr_pairs = [(col1, col2) for col1 in upper_tri.columns for col2 in upper_tri.index if
-                           upper_tri.loc[col2, col1] > 0.80]
-        columns_to_drop = []
+        # Find highly correlated pairs and drop the one with the lower correlation to target
+        for col in upper_tri.columns:
+            for row in upper_tri.index:
+                if upper_tri.loc[row, col] > self.correlation_threshold:
+                    corr_with_target_col = abs(df[col].corr(df[self.target_variable]))
+                    corr_with_target_row = abs(df[row].corr(df[self.target_variable]))
+                    if corr_with_target_col < corr_with_target_row:
+                        self.columns_to_drop_.append(col)
+                    else:
+                        self.columns_to_drop_.append(row)
 
-        for col1, col2 in high_corr_pairs:
-            # Get correlation with the target variable
-            corr_with_target_col1 = df[col1].corr(df[target_variable])
-            corr_with_target_col2 = df[col2].corr(df[target_variable])
+        # Deduplicate and ensure we don't drop the target variable itself
+        self.columns_to_drop_ = list(set(self.columns_to_drop_))
+        if self.target_variable in self.columns_to_drop_:
+            self.columns_to_drop_.remove(self.target_variable)
 
-            # Drop the column with lower correlation to the target variable
-            if abs(corr_with_target_col1) < abs(corr_with_target_col2):
-                columns_to_drop.append(col1)
-            else:
-                columns_to_drop.append(col2)
+        return self
+    
+    def transform(self, X):
+        # Drop the columns identified in fit
+        return X.drop(columns=self.columns_to_drop_, errors='ignore')
 
-        df.drop(list(set(columns_to_drop)), axis=1, inplace=True)
-    except Exception as e:
-        print(f"Error in creating the correlation matrix: {e}")
+class RemoveOutliers(BaseEstimator, TransformerMixin):
+    def __init__(self, contamination=0.05):
+        self.contamination = contamination
+    
+    def fit(self, X, y=None):
+        numerical_cols = X.select_dtypes(include=['float64', 'int64']).columns
+        self.iso_forest_ = IsolationForest(contamination=self.contamination, random_state=42)
+        self.iso_forest_.fit(X[numerical_cols])
+        return self
+    
+    def transform(self, X):
+        numerical_cols = X.select_dtypes(include=['float64', 'int64']).columns
+        outliers = self.iso_forest_.predict(X[numerical_cols])
+        return X[outliers != -1]
 
-    # 2. Applying PCA
-    try:
-        pca = PCA()
-        pca.fit(df.drop(target_variable, axis=1))
-
-        cumulative_variance = np.cumsum(pca.explained_variance_ratio_)
-        thresholds = [0.90, 0.95, 0.99]
-        best_components = []
-
-        for threshold in thresholds:
-            n_components = np.argmax(cumulative_variance >= threshold) + 1
-            best_components.append(n_components)
-
-        pca = PCA(n_components=best_components[0])
-        df_transformed = pca.fit_transform(df.drop(target_variable, axis=1))
-
-        # Convert the transformed array back to a DataFrame if needed
-        df_pca = pd.DataFrame(df_transformed, columns=[f'PC{i + 1}' for i in range(best_components[0])])
-
-        # Optionally concatenate the target variable back to the PCA DataFrame if needed
-        df = pd.concat([df_pca, df[target_variable].reset_index(drop=True)], axis=1)
-
-        # Scale the PCA features
-        scaler = StandardScaler()
-        df.iloc[:, :-1] = scaler.fit_transform(df.iloc[:, :-1])
-
-    except Exception as e:
-        print(f"Error Applying PCA: {e}")
-
-    return df
+class DropNullRows(BaseEstimator, TransformerMixin):
+    def fit(self, X, y=None):
+        return self
+    
+    def transform(self, X):
+        return X.dropna()
 
 
-# Model Selection function
+class ConvertToDataFrame(BaseEstimator, TransformerMixin):
+    def fit(self, X, y=None):
+        return self
+    
+    def transform(self, X):
+        return pd.DataFrame(X, columns=X.columns, index=X.index)
+
+
+class CustomLabelEncoder(BaseEstimator, TransformerMixin):
+    def __init__(self, target_variable=None):
+        self.target_variable = target_variable
+        self.label_encoders = {}
+
+    def fit(self, X, y=None):
+        for col in X.select_dtypes(include=['object', 'category']).columns:
+            if col == self.target_variable:
+                continue
+            self.label_encoders[col] = LabelEncoder()
+            self.label_encoders[col].fit(X[col])
+        return self
+
+    def transform(self, X):
+        for col in X.select_dtypes(include=['object', 'category']).columns:
+            if col == self.target_variable:
+                continue
+            X[col] = self.label_encoders[col].transform(X[col])
+        return X
+
+    def inverse_transform(self, X):
+        for col in X.select_dtypes(include=['object', 'category']).columns:
+            if col == self.target_variable:
+                continue
+            X[col] = self.label_encoders[col].inverse_transform(X[col])
+        return X
+
+    
+class CustomStandardScaler(BaseEstimator, TransformerMixin):
+    def __init__(self, target_variable=None):
+        self.target_variable = target_variable
+        self.scalers = {}
+
+    def fit(self, X, y=None):
+        for col in X.select_dtypes(include=['int64', 'float64']).columns:
+            if col == self.target_variable:
+                continue
+            self.scalers[col] = StandardScaler()
+            self.scalers[col].fit(X[col].values.reshape(-1, 1))
+        return self
+
+    def transform(self, X):
+        Xt = X.copy()
+        for col in X.select_dtypes(include=['int64', 'float64']).columns:
+            if col == self.target_variable:
+                continue
+            X[col] = self.scalers[col].transform(X[col].values.reshape(-1, 1))
+        return pd.DataFrame(X, columns=X.columns, index=Xt.index)
+    
+    def inverse_transform(self, X):
+        for col in X.select_dtypes(include=['int64', 'float64']).columns:
+            if col == self.target_variable:
+                continue
+            X[col] = self.scalers[col].inverse_transform(X[col].values.reshape(-1, 1))
+        return X
+
+
+class Preprocess(BaseEstimator, TransformerMixin):
+    def __init__(self, target_variable=None):
+        self.target_variable = target_variable
+
+        self.sl = Pipeline([
+            ('remove_duplicates', RemoveDuplicates()),
+            ('drop_high_missing', DropHighMissing()),
+            ('drop_high_cardinality', DropHighCardinality()),
+            ('remove_outliers', RemoveOutliers()),
+            ('drop_null_rows', DropNullRows())
+        ])
+
+    def fit(self, X, y=None):
+        self.sl.fit(X)
+        return self
+
+    def transform(self, X):
+        return self.sl.transform(X)
+
+
+class FeatureEngineer(BaseEstimator, TransformerMixin):
+    def __init__(self, target_variable=None):
+        self.target_variable = target_variable
+
+        self.sl = Pipeline([
+            ('remove_highly_correlated', RemoveHighlyCorrelated(target_variable=self.target_variable)),
+            ('standard_scaler', CustomStandardScaler(target_variable=self.target_variable)),
+        ])
+
+    def fit(self, X, y=None):
+        self.sl.fit(X)
+        return self
+    
+    def transform(self, X):
+        transformed_array = self.sl.transform(X)
+
+        return pd.DataFrame(transformed_array, columns=X.columns, index=X.index)
+
+
+def createPipeline(df: DataFrame, target_variable: str) -> Pipeline:
+    sl = Pipeline([
+        ('preprocess', Preprocess(target_variable)),
+        ('feature_engineer', FeatureEngineer(target_variable))
+    ])
+
+    return sl
+
 def selectBestModel(df: DataFrame, target_variable: str) -> ClassifierMixin:
     models = {
         'Random Forest': RandomForestClassifier(n_estimators=100, random_state=42),
