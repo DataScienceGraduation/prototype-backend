@@ -1,5 +1,5 @@
 from django.shortcuts import render
-from django.views.decorators.http import require_POST
+from django.views.decorators.http import require_POST, require_GET
 from django.views.decorators.csrf import csrf_exempt
 from django.http import JsonResponse
 from automl.models import ModelEntry
@@ -62,4 +62,31 @@ def trainModel(request):
         return JsonResponse({'success': True}, status=200)
     except Exception as e:
         print(f"Error in training model: {e}")
+        return JsonResponse({'success': False, 'message': 'There was an error'}, status=500)
+    
+
+@csrf_exempt
+@require_GET
+def getAllModels(request):
+    try:
+        entries = ModelEntry.objects.all()
+        data = []
+        for entry in entries:
+            data.append({
+                'id': entry.id,
+                'name': entry.name,
+                'description': entry.description,
+                'task': entry.task,
+                'target_variable': entry.target_variable,
+                'list_of_features': entry.list_of_features,
+                'status': entry.status,
+                'model_name': entry.model_name,
+                'evaluation_metric': entry.evaluation_metric,
+                'evaluation_metric_value': entry.evaluation_metric_value
+            })
+        response = JsonResponse({'success': True, 'data': data }, status=200)
+        response["Access-Control-Allow-Origin"] = "http://localhost:3000"
+        return response
+    except Exception as e:
+        print(f"Error in getting all models: {e}")
         return JsonResponse({'success': False, 'message': 'There was an error'}, status=500)
