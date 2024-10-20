@@ -222,9 +222,15 @@ class FeatureEngineer(BaseEstimator, TransformerMixin):
 
 def createPipeline(df: DataFrame, target_variable: str) -> Pipeline:
     sl = Pipeline([
-        ('preprocess', Preprocess(target_variable)),
         ('feature_engineer', FeatureEngineer(target_variable))
     ])
+
+
+    sl.fit(df)
+
+    df = sl.transform(df)
+
+    print(df.head(5))
 
     return sl
 

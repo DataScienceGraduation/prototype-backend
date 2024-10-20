@@ -103,9 +103,12 @@ def infer(request):
         model = joblib.load(f'models/{entry.id}.pkl')
         pl = joblib.load(f'pipelines/{entry.id}.pkl')
         data = json.loads(data['data'])
+        # add outcome to data
         df = pd.DataFrame([data])
         df = df.reset_index(drop=True)
         print(df)
+        df = pl.transform(df)
+
         print("Transformed Data")
         prediction = model.predict(df)
         print(f"Prediction: {prediction}")
