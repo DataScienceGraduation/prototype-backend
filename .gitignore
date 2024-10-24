@@ -6,6 +6,7 @@
 
 /data/*
 /models/*
+/pipelines/*
 
 /db.sqlite3
 /.idea
