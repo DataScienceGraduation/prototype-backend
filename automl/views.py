@@ -104,10 +104,9 @@ def infer(request):
         data = json.loads(data['data'])
         # add outcome to data
         df = pd.DataFrame([data])
-        df = df.reset_index(drop=True)
-        print(df)
+        df[entry.target_variable] = 0
         df = pl.transform(df)
-
+        df.drop(entry.target_variable, axis=1, inplace=True)
         print("Transformed Data")
         prediction = model.predict(df)
         print(f"Prediction: {prediction}")
