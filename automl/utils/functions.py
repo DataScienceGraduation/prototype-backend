@@ -2,26 +2,22 @@ import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator, TransformerMixin, ClassifierMixin
 from sklearn.pipeline import Pipeline
-from sklearn.compose import ColumnTransformer, make_column_selector
-from sklearn.preprocessing import StandardScaler, OrdinalEncoder, LabelEncoder
-from sklearn.impute import SimpleImputer
 from sklearn.ensemble import IsolationForest, RandomForestClassifier
 from sklearn.model_selection import GridSearchCV, RandomizedSearchCV, train_test_split
 from sklearn.metrics import accuracy_score
 from sklearn import svm
-from sklearn.linear_model import LogisticRegression
-import joblib
 import xgboost as xgb
+from sklearn.linear_model import LogisticRegression
+from sklearn.preprocessing import StandardScaler, LabelEncoder
 from pandas import DataFrame
 from typing import Tuple
 
 class RemoveDuplicates(BaseEstimator, TransformerMixin):
     def fit(self, X, y=None):
-        self.unique_indices_ = X.drop_duplicates().index
         return self
     
     def transform(self, X):
-        return X.loc[self.unique_indices_]
+        return X.drop_duplicates()
 
 class DropHighMissing(BaseEstimator, TransformerMixin):
     def __init__(self, threshold=0.4):
@@ -32,6 +28,16 @@ class DropHighMissing(BaseEstimator, TransformerMixin):
         return self
     
     def transform(self, X):
+        return X.drop(columns=self.columns_to_drop_, errors='ignore')
+
+class DropSingleValueColumns(BaseEstimator, TransformerMixin):
+    def fit(self, X, y=None):
+        # Identify columns with a single unique value
+        self.columns_to_drop_ = [col for col in X.columns if X[col].nunique() == 1]
+        return self
+    
+    def transform(self, X):
+        # Drop the identified columns
         return X.drop(columns=self.columns_to_drop_, errors='ignore')
 
 class DropHighCardinality(BaseEstimator, TransformerMixin):
@@ -54,10 +60,9 @@ class RemoveHighlyCorrelated(BaseEstimator, TransformerMixin):
         self.target_variable = target_variable
     
     def fit(self, X, y=None):
-        # Since this transformer needs both X and y, we ensure y is provided
         if y is None:
-            y = X[self.target_variable]
-
+            raise ValueError("Target variable 'y' must be provided for correlation analysis.")
+        
         # Combine X and y for correlation calculation
         df = X.copy()
         df[self.target_variable] = y
@@ -71,13 +76,12 @@ class RemoveHighlyCorrelated(BaseEstimator, TransformerMixin):
         
         self.columns_to_drop_ = []
 
-        # Find highly correlated pairs and drop the one with the lower correlation to target
+        # Find highly correlated pairs and drop one of them
         for col in upper_tri.columns:
             for row in upper_tri.index:
                 if upper_tri.loc[row, col] > self.correlation_threshold:
-                    corr_with_target_col = abs(df[col].corr(df[self.target_variable]))
-                    corr_with_target_row = abs(df[row].corr(df[self.target_variable]))
-                    if corr_with_target_col < corr_with_target_row:
+                    # Drop the column with lower correlation to the target variable
+                    if abs(df[col].corr(df[self.target_variable])) < abs(df[row].corr(df[self.target_variable])):
                         self.columns_to_drop_.append(col)
                     else:
                         self.columns_to_drop_.append(row)
@@ -90,7 +94,6 @@ class RemoveHighlyCorrelated(BaseEstimator, TransformerMixin):
         return self
     
     def transform(self, X):
-        # Drop the columns identified in fit
         return X.drop(columns=self.columns_to_drop_, errors='ignore')
 
 class RemoveOutliers(BaseEstimator, TransformerMixin):
@@ -115,15 +118,6 @@ class DropNullRows(BaseEstimator, TransformerMixin):
     def transform(self, X):
         return X.dropna()
 
-
-class ConvertToDataFrame(BaseEstimator, TransformerMixin):
-    def fit(self, X, y=None):
-        return self
-    
-    def transform(self, X):
-        return pd.DataFrame(X, columns=X.columns, index=X.index)
-
-
 class CustomLabelEncoder(BaseEstimator, TransformerMixin):
     def __init__(self, target_variable=None):
         self.target_variable = target_variable
@@ -138,20 +132,11 @@ class CustomLabelEncoder(BaseEstimator, TransformerMixin):
         return self
 
     def transform(self, X):
-        for col in X.select_dtypes(include=['object', 'category']).columns:
-            if col == self.target_variable:
-                continue
-            X[col] = self.label_encoders[col].transform(X[col])
-        return X
+        X_transformed = X.copy()
+        for col in self.label_encoders.keys():
+            X_transformed[col] = self.label_encoders[col].transform(X_transformed[col])
+        return X_transformed
 
-    def inverse_transform(self, X):
-        for col in X.select_dtypes(include=['object', 'category']).columns:
-            if col == self.target_variable:
-                continue
-            X[col] = self.label_encoders[col].inverse_transform(X[col])
-        return X
-
-    
 class CustomStandardScaler(BaseEstimator, TransformerMixin):
     def __init__(self, target_variable=None):
         self.target_variable = target_variable
@@ -166,80 +151,69 @@ class CustomStandardScaler(BaseEstimator, TransformerMixin):
         return self
 
     def transform(self, X):
-        Xt = X.copy()
-        for col in X.select_dtypes(include=['int64', 'float64']).columns:
-            if col == self.target_variable:
-                continue
-            X[col] = self.scalers[col].transform(X[col].values.reshape(-1, 1))
-        return pd.DataFrame(X, columns=X.columns, index=Xt.index)
+        X_transformed = X.copy()
+        for col in self.scalers.keys():
+            X_transformed[col] = self.scalers[col].transform(X_transformed[col].values.reshape(-1, 1))
+        return X_transformed
     
-    def inverse_transform(self, X):
-        for col in X.select_dtypes(include=['int64', 'float64']).columns:
-            if col == self.target_variable:
-                continue
-            X[col] = self.scalers[col].inverse_transform(X[col].values.reshape(-1, 1))
-        return X
-
-
 class Preprocess(BaseEstimator, TransformerMixin):
     def __init__(self, target_variable=None):
         self.target_variable = target_variable
-
-        self.sl = Pipeline([
+        self.pipeline = Pipeline([
             ('remove_duplicates', RemoveDuplicates()),
             ('drop_high_missing', DropHighMissing()),
+            ('drop_single_value_columns', DropSingleValueColumns()),
             ('drop_high_cardinality', DropHighCardinality()),
+            ('label_encoding', CustomLabelEncoder(target_variable=self.target_variable)),
             ('remove_outliers', RemoveOutliers()),
             ('drop_null_rows', DropNullRows())
         ])
 
     def fit(self, X, y=None):
-        self.sl.fit(X)
+        self.pipeline.fit(X, y)
         return self
 
     def transform(self, X):
-        return self.sl.transform(X)
-
+        return self.pipeline.transform(X)
 
 class FeatureEngineer(BaseEstimator, TransformerMixin):
     def __init__(self, target_variable=None):
         self.target_variable = target_variable
-
-        self.sl = Pipeline([
+        self.pipeline = Pipeline([
             ('remove_highly_correlated', RemoveHighlyCorrelated(target_variable=self.target_variable)),
             ('standard_scaler', CustomStandardScaler(target_variable=self.target_variable)),
         ])
 
     def fit(self, X, y=None):
-        self.sl.fit(X)
+        self.pipeline.fit(X, y)
         return self
     
     def transform(self, X):
-        transformed_array = self.sl.transform(X)
-
-        return pd.DataFrame(transformed_array, columns=X.columns, index=X.index)
-
+        return self.pipeline.transform(X)
 
 def createPipeline(df: DataFrame, target_variable: str) -> Pipeline:
-    sl = Pipeline([
-        ('feature_engineer', FeatureEngineer(target_variable))
+    print("Creating the pipeline")
+    pipeline = Pipeline([
+        ('preprocess', Preprocess(target_variable=target_variable)),
+        ('feature_engineer', FeatureEngineer(target_variable=target_variable)),
     ])
 
+    # Fit the pipeline on the dataset
+    pipeline.fit(df, df[target_variable])
 
-    sl.fit(df)
+    # Apply the transformations
+    transformed_df = pipeline.transform(df)
 
-    df = sl.transform(df)
+    print(transformed_df.head(5))  # For debugging
 
-    print(df.head(5))
-
-    return sl
+    return pipeline
 
 def selectBestModel(df: DataFrame, target_variable: str, fast_mode: bool = False) -> Tuple[ClassifierMixin, float]:
     models = {
         'Random Forest': RandomForestClassifier(random_state=42),
         'XGBoost': xgb.XGBClassifier(),
-        'SVM (Linear)': svm.SVC(kernel='linear', probability=True),
-        'SVM (RBF)': svm.SVC(kernel='rbf', probability=True)
+        #'SVM (Linear)': svm.SVC(kernel='linear', probability=True),
+        #'SVM (RBF)': svm.SVC(kernel='rbf', probability=True)
     }
 
     # Add Logistic Regression if binary classification
@@ -257,13 +231,13 @@ def selectBestModel(df: DataFrame, target_variable: str, fast_mode: bool = False
             'learning_rate': [0.01, 0.1, 0.2],
             'max_depth': [3, 5, 7]
         },
-        'SVM (Linear)': {
-            'C': [0.1, 1, 10]
-        },
-        'SVM (RBF)': {
-            'C': [0.1, 1, 10],
-            'gamma': ['scale', 'auto']
-        },
+        #'SVM (Linear)': {
+            #'C': [0.1, 1, 10]
+        #},
+        #'SVM (RBF)': {
+            #'C': [0.1, 1, 10],
+            #'gamma': ['scale', 'auto']
+        #},
         'Logistic Regression': {
             'C': [0.1, 1, 10],
             'max_iter': [100, 500, 1000]

@@ -58,9 +58,8 @@ def trainModel(request):
         entry.target_variable = data['target_variable']
         entry.status = 'Model Training'
         entry.save()
-
         train_model_task.delay(entry.id)
-
+        print("done")
         return JsonResponse({'success': True}, status=200)
     except Exception as e:
         print(f"Error in training model: {e}")
