@@ -1,13 +1,13 @@
 /venv
 /env
 
-*/__pycache__/*
+**/__pycache__/*
 *.pyc
 
 /data/*
 /models/*
 /pipelines/*
 
-/db.sqlite3
+*.sqlite3
 /.idea
 /.vscode
