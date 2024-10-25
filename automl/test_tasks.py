@@ -12,13 +12,16 @@ def test_train_model_task(mocker):
     # sample dataframe
     df = pd.DataFrame({
         'feature1': [1, 2, 3, 4],
+        'feature2': [1, 2, 3, 4],
         'target': [4, 4, 4, 4]
     })
     mocker.patch('pandas.read_csv', return_value=df)
     
-    mocker.patch('automl.utils.functions.preprocess', return_value=df)
-    
-    mocker.patch('automl.utils.functions.featureEngineer', return_value=df)
+    # Mock the pipeline.transform method    
+    mock_pipeline = mocker.MagicMock()
+    mock_pipeline.transform.return_value = df
+    mocker.patch('automl.utils.functions.createPipeline', return_value=mock_pipeline)
+
 
     # Create a mock for XGBClassifier
     mock_xgb_classifier = mocker.patch('xgboost.XGBClassifier', autospec=True)

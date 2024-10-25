@@ -19,9 +19,9 @@ def train_model_task(entry_id):
         pl = createPipeline(df, entry.target_variable)
         df = pl.transform(df)
         entry.status = 'Model Selection and Training'
-        print(f"Training model for entry: {entry.id}")
         entry.save()
-        print(f"Training model for entry: {entry.id}")
+        entry.status = df
+        entry.save()
         model, accuracy = selectBestModel(df, entry.target_variable)
         entry.model_name = model.__class__.__name__
         entry.evaluation_metric = 'Accuracy'
@@ -31,6 +31,6 @@ def train_model_task(entry_id):
         joblib.dump(model, f'models/{entry.id}.pkl')
         joblib.dump(pl, f'pipelines/{entry.id}.pkl')
     except Exception as e:
-        print(f"Error during model training: {e}")
-        entry.status = 'Failed'
+        print(f"Error during model training: {df}, {e}, {entry.status}")
+        entry.status = 'failed'
         entry.save()
