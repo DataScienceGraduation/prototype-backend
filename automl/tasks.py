@@ -19,6 +19,7 @@ def train_model_task(entry_id):
         pl = createPipeline(df, entry.target_variable)
         df = pl.transform(df)
         entry.status = 'Model Selection and Training'
+        print(f"Training model for entry: {entry.id}")
         entry.save()
         print(f"Training model for entry: {entry.id}")
         model, accuracy = selectBestModel(df, entry.target_variable)
