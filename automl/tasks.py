@@ -1,6 +1,8 @@
 from celery import shared_task
 from .models import ModelEntry
-from .utils.functions import selectBestModel, createPipeline
+from .utils.HPOptimizer.RandomSearchHPOptimizer import RandomSearchHPOptimizer
+from .utils.HPOptimizer.BaseHPOptimizer import Task, Metric
+from .utils.functions import createPipeline
 import joblib
 import os
 
@@ -22,7 +24,11 @@ def train_model_task(entry_id):
         entry.save()
         entry.status = df
         entry.save()
-        model, accuracy = selectBestModel(df, entry.target_variable)
+        hpo = RandomSearchHPOptimizer(task=Task.CLASSIFICATION, time_budget=600, metric=Metric.ACCURACY)
+        hpo.fit(df, entry.target_variable)
+        accuracy = hpo.metric_value
+        model = hpo.getOptimalModel()
+        entry.status = 'Saving Model'
         entry.model_name = model.__class__.__name__
         entry.evaluation_metric = 'Accuracy'
         entry.evaluation_metric_value = accuracy
