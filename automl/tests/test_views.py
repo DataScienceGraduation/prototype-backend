@@ -19,6 +19,7 @@ def test_load_data_view():
     response = client.post(reverse('loadData'), {'file': sample_file})
     
     # Check response
+    print(response)
     assert response.status_code == 200
     data = response.json()
     

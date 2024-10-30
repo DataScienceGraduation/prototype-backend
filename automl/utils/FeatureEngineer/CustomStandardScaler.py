@@ -13,3 +13,9 @@ class CustomStandardScaler(BaseEstimator, TransformerMixin):
             self.scalers[col] = StandardScaler()
             self.scalers[col].fit(X[col].values.reshape(-1, 1))
         return self
+    
+    def transform(self, X):
+        X_transformed = X.copy()
+        for col in self.scalers.keys():
+            X_transformed[col] = self.scalers[col].transform(X_transformed[col].values.reshape(-1, 1))
+        return X_transformed

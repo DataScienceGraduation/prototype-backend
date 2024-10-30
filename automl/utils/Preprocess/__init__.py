@@ -1,7 +1,13 @@
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.pipeline import Pipeline
 
-import RemoveDuplicates, DropHighMissing, DropSingleValueColumns, DropHighCardinality, DropNullRows, CustomLabelEncoder, RemoveOutliers
+from .RemoveDuplicates import RemoveDuplicates
+from .DropHighMissing import DropHighMissing
+from .DropSingleValueColumns import DropSingleValueColumns
+from .DropHighCardinality import DropHighCardinality
+from .DropNullRows import DropNullRows
+from .CustomLabelEncoder import CustomLabelEncoder
+from .RemoveOutliers import RemoveOutliers
 
 
 class Preprocess(BaseEstimator, TransformerMixin):

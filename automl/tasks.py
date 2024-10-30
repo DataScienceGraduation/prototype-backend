@@ -1,7 +1,7 @@
 from celery import shared_task
 from .models import ModelEntry
 from .utils.HPOptimizer.RandomSearchHPOptimizer import RandomSearchHPOptimizer
-from .utils.HPOptimizer.BaseHPOptimizer import Task, Metric
+from .utils.HPOptimizer import Task, Metric
 from .utils.functions import createPipeline
 import joblib
 import os

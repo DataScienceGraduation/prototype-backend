@@ -1,4 +1,5 @@
-import BaseHPOptimizer as BHPO
+from .BaseHPOptimizer import BaseHPOptimizer as BHPO
+from . import Metric, Task
 import xgboost as xgb
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
@@ -6,6 +7,9 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
 import numpy as np
 import time
+from pandas import DataFrame
+from typing import Tuple
+from sklearn.base import ClassifierMixin
 
 
 class RandomSearchHPOptimizer(BHPO):
@@ -25,10 +29,10 @@ class RandomSearchHPOptimizer(BHPO):
     verbose: bool
         Whether to print out information during optimization
     """
-    def __init__(self, task: BHPO.Task, time_budget: int, metric: BHPO.Metric = BHPO.Metric.ACCURACY, fast_mode: bool = False, verbose: bool = False):
+    def __init__(self, task: Task, time_budget: int, metric: Metric = Metric.ACCURACY, fast_mode: bool = False, verbose: bool = False):
         super().__init__(task, time_budget, metric, fast_mode, verbose)
     
-    def trainModel(X_train: BHPO.DataFrame, X_test: BHPO.DataFrame, y_test: BHPO.DataFrame, y_train: BHPO.DataFrame, model: BHPO.ClassifierMixin, target_variable: str, params: dict) -> BHPO.Tuple[BHPO.ClassifierMixin, float]:
+    def trainModel(self, X_train: DataFrame, X_test: DataFrame, y_test: DataFrame, y_train: DataFrame, model: ClassifierMixin, target_variable: str, params: dict) -> Tuple[ClassifierMixin, float]:
         # Train the model
         param_grid = {k: [np.random.choice(v)] for k, v in params.items()}
         for k in param_grid.keys():
@@ -48,7 +52,7 @@ class RandomSearchHPOptimizer(BHPO):
         return model, accuracy
 
 
-    def fit(self, df: BHPO.DataFrame, target_variable: str, fast_mode: bool = False):
+    def fit(self, df: DataFrame, target_variable: str, fast_mode: bool = False):
         timeout = 10 if fast_mode else 300  # Timeout in seconds
         models = {
             'Random Forest': RandomForestClassifier(random_state=42),
@@ -104,7 +108,7 @@ class RandomSearchHPOptimizer(BHPO):
                     raise ValueError(f"Parameters for {model_name} not found")
                 
                 # Train the model
-                model, accuracy = self.trainModel(X_train, y_train, X_test, y_test, model, target_variable, model_params[model_name])
+                model, accuracy = self.trainModel(X_train, X_test, y_test, y_train, model, target_variable, model_params[model_name])
                 # Update the best model
                 if accuracy > best_accuracy_score:
                     best_model = model
@@ -119,10 +123,10 @@ class RandomSearchHPOptimizer(BHPO):
         self.metric_value = best_accuracy_score
         
 
-    def getOptimalModel(self) -> BHPO.ClassifierMixin:
+    def getOptimalModel(self) -> ClassifierMixin:
         return self.optimal_model
     
-    def getMetric(self) -> BHPO.Metric:
+    def getMetric(self) -> Metric:
         return self.metric
     
     def getMetricValue(self) -> float:
