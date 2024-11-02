@@ -14,7 +14,7 @@ from sklearn.experimental import enable_iterative_imputer
 import pandas as pd
 import os   
 
-from automl.utils.HPOptimizer import Task, Metric
+from automl.utils.Enums import Task, Metric
 
 
 sample_data = pd.DataFrame({

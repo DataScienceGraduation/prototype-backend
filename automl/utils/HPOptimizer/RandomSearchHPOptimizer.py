@@ -1,5 +1,5 @@
 from .BaseHPOptimizer import BaseHPOptimizer as BHPO
-from . import Metric, Task
+from ..Enums import Task, Metric
 import xgboost as xgb
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
@@ -121,13 +121,3 @@ class RandomSearchHPOptimizer(BHPO):
         print(f"Best Model: {best_model.__class__.__name__} with Accuracy Score: {best_accuracy_score:.4f} and Parameters: {best_params}")
         self.optimal_model = best_model
         self.metric_value = best_accuracy_score
-        
-
-    def getOptimalModel(self) -> ClassifierMixin:
-        return self.optimal_model
-    
-    def getMetric(self) -> Metric:
-        return self.metric
-    
-    def getMetricValue(self) -> float:
-        return self.metric_value

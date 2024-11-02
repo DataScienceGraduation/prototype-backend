@@ -44,8 +44,10 @@ def test_train_model_task(mocker):
     mock_hpo.getOptimalModel.return_value = mock_model
     mock_hpo.fit.return_value = None
 
-    mocker.patch('automl.utils.HPOptimizer.RandomSearchHPOptimizer.fit', return_value=None)
-    mocker.patch('automl.utils.HPOptimizer.RandomSearchHPOptimizer.getOptimalModel', return_value=mock_model)
+    mocker.patch('automl.utils.HPOptimizer.RandomSearchHPOptimizer.RandomSearchHPOptimizer.fit', return_value=None)
+    mocker.patch('automl.utils.HPOptimizer.RandomSearchHPOptimizer.RandomSearchHPOptimizer.getOptimalModel', return_value=mock_model)
+    mocker.patch('automl.utils.HPOptimizer.RandomSearchHPOptimizer.RandomSearchHPOptimizer.getMetricValue', return_value=0.95)
+    mocker.patch('joblib.dump', return_value=None)
         
     
     # Create a test ModelEntry object

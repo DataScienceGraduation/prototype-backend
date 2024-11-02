@@ -4,7 +4,9 @@ from enum import Enum
 from pandas import DataFrame
 from sklearn.base import ClassifierMixin
 from typing import Tuple
-from . import Metric, Task
+
+from ..Enums import Task, Metric
+
 class BaseHPOptimizer:
     """
     Base class for all hyperparameter optimizers
@@ -29,11 +31,18 @@ class BaseHPOptimizer:
         self.fast_mode = fast_mode
         self.verbose = verbose
         self.optimal_hyperparameters = {}
+        self.optimal_model = None
 
     @abstractmethod
-    def fit(self, df: DataFrame, target_variable: str, fast_mode: bool = False):
+    def fit(self, df: DataFrame, target_variable: str, fast_mode: bool = False) -> None: 
         pass
 
-    @abstractmethod
     def getOptimalModel(self) -> ClassifierMixin:
-        pass
+        return self.optimal_model
+    
+    def getMetric(self) -> Metric:
+        return self.metric
+    
+    def getMetricValue(self) -> float:
+        return self.metric_value
+    
