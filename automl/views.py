@@ -7,6 +7,7 @@ import pandas as pd
 from automl.tasks import train_model_task
 import joblib
 import json
+import ast
 
 # Create your views here.
 @csrf_exempt
@@ -142,6 +143,16 @@ def infer(request):
         model = joblib.load(f'models/{entry.id}.pkl')
         pl = joblib.load(f'pipelines/{entry.id}.pkl')
         data = json.loads(data['data'])
+        print(data)
+        list_of_features = ast.literal_eval(entry.list_of_features)
+        print(list_of_features)
+        print("TEST")
+        for key, value in data.items():
+            print(key, value)
+            if list_of_features[key] == 'integer':
+                data[key] = int(value)
+            elif list_of_features[key] == 'float':
+                data[key] = float(value)
         # add outcome to data
         df = pd.DataFrame([data])
         df2 = pd.read_csv(f'data/{entry.id}.csv')
@@ -158,4 +169,4 @@ def infer(request):
         return JsonResponse({'success': True, 'prediction': str(finalPrediction)}, status=200)
     except Exception as e:
         print(f"Error in inference: {e}")
-        return JsonResponse({'success': False, 'message': 'There was an error'}, status=500)
+        return JsonResponse({'success': False, 'message': 'There was an error'}, status=500)#
