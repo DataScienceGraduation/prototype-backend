@@ -20,18 +20,35 @@ def loadData(request):
             return JsonResponse({'success': False, 'message': 'Error parsing your file'}, status=400)
         columns = list(df.columns)
         suggested_target_variables = []
+        features = {}
         
         for column in columns:
             print(column, len(df[column].unique()), len(df), df[column].dtype)
             if len(df[column].unique()) != len(df) and len(df[column].unique()) > 1 and df[column].dtype in ['int64', 'object', 'bool']:
                 suggested_target_variables.append(column)
+            if len(df[column].unique()) == len(df) and len(df[column].unique()) > 1:
+                features[column] = 'constant'
+            elif len(df[column].unique()) == 1:
+                features[column] = 'unique'
+            elif len(df[column].unique()) < 10:
+                features[column] = [x for x in df[column].unique()]
+            elif df[column].dtype == 'object':
+                features[column] = 'categorical'
+            elif df[column].dtype == 'int64':
+                features[column] = 'integer'
+            elif df[column].dtype == 'float64':
+                features[column] = 'float'
+            else:
+                features[column] = 'unknown'
+                
+
 
         entry = ModelEntry.objects.create(
             name="", 
             description="", 
             task="", 
             target_variable="",
-            list_of_features=columns, 
+            list_of_features=features, 
             status='Data Loaded',
             model_name="",
             evaluation_metric="",
@@ -92,6 +109,29 @@ def getAllModels(request):
         print(f"Error in getting all models: {e}")
         return JsonResponse({'success': False, 'message': 'There was an error'}, status=500)
     
+@csrf_exempt
+@require_GET
+def getModel(request):
+    try:
+        entries = ModelEntry.objects.get(id=request.GET['id'])
+        data = {
+            'id': entries.id,
+            'name': entries.name,
+            'description': entries.description,
+            'task': entries.task,
+            'target_variable': entries.target_variable,
+            'list_of_features': entries.list_of_features,
+            'status': entries.status,
+            'model_name': entries.model_name,
+            'evaluation_metric': entries.evaluation_metric,
+            'evaluation_metric_value': entries.evaluation_metric_value
+        }
+        response = JsonResponse({'success': True, 'data': data }, status=200)
+        response["Access-Control-Allow-Origin"] = "http://localhost:3000"
+        return response
+    except Exception as e:
+        print(f"Error in getting model: {e}")
+        return JsonResponse({'success': False, 'message': 'There was an error'}, status=500)
 
 @csrf_exempt
 @require_POST
@@ -104,7 +144,11 @@ def infer(request):
         data = json.loads(data['data'])
         # add outcome to data
         df = pd.DataFrame([data])
-        df[entry.target_variable] = 0
+        df2 = pd.read_csv(f'data/{entry.id}.csv')
+        # get value of target variable
+        target_variable_first_value = df2[entry.target_variable].iloc[0]
+        df[entry.target_variable] = target_variable_first_value
+        print(df)
         df = pl.transform(df)
         df.drop(entry.target_variable, axis=1, inplace=True)
         print("Transformed Data")
