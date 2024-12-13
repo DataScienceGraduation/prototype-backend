@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 import numpy as np
 from typing import Any
 
-class AcquisitionFunction(ABC):
+class BaseAcquistionFunction(ABC):
     """
     Abstract base class for all acquisition functions used in Bayesian optimization.
     """

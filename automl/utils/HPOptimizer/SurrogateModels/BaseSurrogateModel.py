@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 import numpy as np
 from typing import Tuple
 
-class SurrogateModel(ABC):
+class BaseSurrogateModel(ABC):
     """
     Abstract base class for all surrogate models used in Bayesian optimization.
     """

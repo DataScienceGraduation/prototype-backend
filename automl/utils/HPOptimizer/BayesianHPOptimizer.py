@@ -1,11 +1,10 @@
 from .BaseHPOptimizer import BaseHPOptimizer
-from .AcquistionFunctions import ExpectedImprovement
-from .SurrogateModels import GaussianProcessSurrogate
 import numpy as np
-
+from sklearn.model_selection import cross_val_score
+from sklearn.preprocessing import LabelEncoder
 
 class BayesianHPOptimizer(BaseHPOptimizer):
-    def __init__(self, task, time_budget, metric, fast_mode, verbose, surrogate_model = GaussianProcessSurrogate, acquisition_function = ExpectedImprovement):
+    def __init__(self, task, time_budget, metric, fast_mode, verbose, surrogate_model, acquisition_function):
         super().__init__(task, time_budget, metric, fast_mode, verbose)
         self.surrogate_model = surrogate_model
         self.acquisition_function = acquisition_function
@@ -18,57 +17,62 @@ class BayesianHPOptimizer(BaseHPOptimizer):
             'C': np.arange(0.1, 10, 0.1),
             'gamma': np.arange(0.1, 10, 0.1)
         }
+        
+        # Set up a LabelEncoder for the 'model' parameter
+        self.model_encoder = LabelEncoder()
+        self.model_encoder.fit(self.state_space['model'])
 
-    def _generate_candidate_points(self, X: np.ndarray, n_points: int = 30):
+    def _generate_candidate_points(self, n_points: int = 30) -> list:
         """
-        Generate candidate points within the bounds of the input data space.
+        Generate candidate points within the bounds of the input data space, encoding categorical values as needed.
         """
-        bounds = [(X[:, i].min(), X[:, i].max()) for i in range(X.shape[1])]
-        candidate_points = np.random.uniform(low=bounds[0][0], high=bounds[0][1], size=(n_points, X.shape[1]))
-        return candidate_points
-    
-    def _objective_function(self, params: np.ndarray):
+        candidates = []
+        for _ in range(n_points):
+            candidate = {param: np.random.choice(values) for param, values in self.state_space.items()}
+            # Encode the model name numerically
+            candidate['model'] = self.model_encoder.transform([candidate['model']])[0]
+            candidates.append(candidate)
+        return candidates  # Return a list of dictionaries
+
+
+    def _objective_function(self, params: dict, X: np.ndarray, y: np.ndarray) -> float:
         """
         Objective function to be optimized by the Bayesian optimization process.
         """
-        try:
-            model = self.trainModel(params)
-            score = self.evaluateModel(model)
-            return score
-        except Exception as e:
-            print(f"Error: {e}")
-        return
-        
+        # Decode model type for initialization
+        print(params['model'])
+        params['model'] = self.model_encoder.inverse_transform(params['model'])[0]
+        model = self._initialize_model(params)
+        score = cross_val_score(model, X, y, cv=5, scoring=self.metric)
+        return score.mean()
 
-    def fit(self, df, target_variable, fast_mode=False):
-        X = df.drop(target_variable, axis=1)
-        y = df[target_variable]
+    def fit(self, X: np.ndarray, y: np.ndarray):
+        """
+        Perform Bayesian Optimization to fit the best model based on the defined objective.
+        """
+        history = []
 
-        initial_points = 5 if fast_mode else 20
-        self.surrogate_model = self.surrogate_model()
+        # Initial random samples
+        for _ in range(5):
+            params = self._generate_candidate_points(1)[0]
+            print(params)
+            score = self._objective_function(params, X, y)
+            history.append((params, score))
 
-        X_sample = X.sample(n=initial_points)
-        y_sample = y[X_sample.index]
+        # Main Bayesian Optimization loop
+        for _ in range(self.time_budget):
+            X_history = np.array([list(h[0].values()) for h in history])
+            y_history = np.array([h[1] for h in history])
+            self.surrogate_model.fit(X_history, y_history)
 
-        self.surrogate_model.fit(X_sample, y_sample)
+            candidates = self._generate_candidate_points(30)
+            acquisition_values = self.acquisition_function.evaluate(candidates, self.surrogate_model)
+            best_candidate = candidates[np.argmax(acquisition_values)]
+            score = self._objective_function(dict(zip(self.state_space.keys(), best_candidate)), X, y)
+            history.append((dict(zip(self.state_space.keys(), best_candidate)), score))
 
-        n_iter = 5 if fast_mode else 20
-
-        for i in range(n_iter):
-            candidate_points = self._generate_candidate_points(X_sample)
-            
-            acquisition_values = self.acquisition_function.evaluate(candidate_points, self.surrogate_model)
-            next_point = candidate_points[np.argmax(acquisition_values)]
-
-            next_value = self._objective_function(next_point)
-
-            X_sample = np.vstack([X_sample, next_point])
-            y_sample = np.append(y_sample, y.loc[next_point])
-
-            self.surrogate_model.fit(X_sample, y_sample)
-
-            if next_value > self.metric_value:
-                self.metric_value = next_value
-                self.optimal_hyperparameters = next_point
-                self.optimal_model = self.surrogate_model
-
+        # Return the best parameters found
+        best_params = max(history, key=lambda item: item[1])[0]
+        # Decode the model type for the best model before initializing
+        best_params['model'] = self.model_encoder.inverse_transform([best_params['model']])[0]
+        return self._initialize_model(best_params)
