@@ -7,7 +7,7 @@ from sklearn.gaussian_process.kernels import RBF, ConstantKernel as C
 
 class GaussianProcessSurrogate(BaseSurrogateModel):
     def __init__(self):
-        self.model = GaussianProcessRegressor(kernel=C(1.0) * RBF(length_scale=1.0), n_restarts_optimizer=10)
+        self.model = GaussianProcessRegressor(kernel = C(1.0, (1e-3, 1e3)) * RBF(length_scale=1.0, length_scale_bounds=(1e-3, 1e3)), n_restarts_optimizer=10)
 
     def fit(self, X: np.ndarray, y: np.ndarray):
         self.model.fit(X, y)

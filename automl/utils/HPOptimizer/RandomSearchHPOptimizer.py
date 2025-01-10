@@ -52,8 +52,7 @@ class RandomSearchHPOptimizer(BHPO):
         return model, accuracy
 
 
-    def fit(self, df: DataFrame, target_variable: str, fast_mode: bool = False):
-        timeout = 10 if fast_mode else 300  # Timeout in seconds
+    def fit(self, df: DataFrame, target_variable: str):
         models = {
             'Random Forest': RandomForestClassifier(random_state=42),
             'XGBoost': xgb.XGBClassifier(),
@@ -93,15 +92,14 @@ class RandomSearchHPOptimizer(BHPO):
         y = df[target_variable]
 
         # Fast mode uses 50% of the data for speed
-        test_size = 0.5 if fast_mode else 0.2
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size, random_state=42)
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
         best_model = None
         best_accuracy_score = 0
         best_params = None
 
         currentTime = time.time()
-        while time.time() - currentTime < timeout:
+        while time.time() - currentTime < self.time_budget:
             for model_name, model in models.items():
                 print(f"Training {model_name}")
                 if model_name not in model_params:
