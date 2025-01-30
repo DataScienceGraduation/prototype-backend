@@ -168,5 +168,7 @@ def infer(request):
         finalPrediction = prediction[0]
         return JsonResponse({'success': True, 'prediction': str(finalPrediction)}, status=200)
     except Exception as e:
+        if '0 sample' in str(e):
+            return JsonResponse({'success': False, 'message': 'Provided Row is an outlier'}, status=400)
         print(f"Error in inference: {e}")
         return JsonResponse({'success': False, 'message': 'There was an error'}, status=500)#
