@@ -24,13 +24,15 @@ def loadData(request):
         features = {}
         
         for column in columns:
+            suggested_target_variables.append(column)
             print(column, len(df[column].unique()), len(df), df[column].dtype)
-            if len(df[column].unique()) != len(df) and len(df[column].unique()) > 1 and df[column].dtype in ['int64', 'object', 'bool']:
-                suggested_target_variables.append(column)
+            if len(df[column].unique()) != len(df) and len(df[column].unique()) > 1 and df[column].dtype in ['int64', 'object', 'bool', 'float64']:
+                #suggested_target_variables.append(column)
+                pass
             if len(df[column].unique()) == len(df) and len(df[column].unique()) > 1:
-                features[column] = 'constant'
-            elif len(df[column].unique()) == 1:
                 features[column] = 'unique'
+            elif len(df[column].unique()) == 1:
+                features[column] = 'constant'
             elif len(df[column].unique()) < 10:
                 features[column] = [x for x in df[column].unique()]
             elif df[column].dtype == 'object':

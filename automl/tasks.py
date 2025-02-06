@@ -5,7 +5,6 @@ from .utils.Enums import Task, Metric
 from .utils.functions import createPipeline
 import joblib
 import os
-
 import pandas as pd
 
 @shared_task
@@ -24,7 +23,7 @@ def train_model_task(entry_id):
         entry.save()
         entry.status = df
         entry.save()
-        hpo = RandomSearchHPOptimizer(task=Task.CLASSIFICATION, time_budget=600, metric=Metric.ACCURACY)
+        hpo = RandomSearchHPOptimizer(task=Task.parse(entry.task), time_budget=100, metric=Metric.MSE)
         hpo.fit(df, entry.target_variable)
         accuracy = hpo.getMetricValue()
         model = hpo.getOptimalModel()
