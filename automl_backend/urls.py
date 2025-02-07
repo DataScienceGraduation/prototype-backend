@@ -1,6 +1,6 @@
 from django.contrib import admin
 from django.urls import path
-from automl.views import loadData, trainModel, getAllModels, infer, getModel
+from automlapp.views import loadData, trainModel, getAllModels, infer, getModel
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('loadData/', loadData, name='loadData'), 

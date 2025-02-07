@@ -23,10 +23,10 @@ def train_model_task(entry_id):
         entry.save()
         entry.status = df
         entry.save()
-        hpo = RandomSearchOptimizer(task=Task.parse(entry.task), time_budget=100, metric=Metric.MSE)
-        hpo.fit(df, entry.target_variable)
-        accuracy = hpo.getMetricValue()
-        model = hpo.getOptimalModel()
+        hpo = RandomSearchOptimizer(task=Task.parse(entry.task), time_budget=5)
+        hpo.fit(df, df[entry.target_variable])
+        accuracy = hpo.get_metric_value()
+        model = hpo.get_optimal_model()
         entry.status = 'Saving Model'
         entry.model_name = model.__class__.__name__
         entry.evaluation_metric = 'Accuracy'
