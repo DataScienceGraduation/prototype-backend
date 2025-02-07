@@ -1,7 +1,7 @@
 # tests/test_tasks.py
 import pytest
-from automl.models import ModelEntry
-from automl.tasks import train_model_task
+from automlapp.models import ModelEntry
+from automlapp.tasks import train_model_task
 from unittest import mock
 import pandas as pd
 import os

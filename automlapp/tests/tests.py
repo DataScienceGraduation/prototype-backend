@@ -6,15 +6,15 @@ from sklearn.linear_model import LogisticRegression
 from sklearn import svm
 import xgboost as xgb
 
-from automl.utils.FeatureEngineer import FeatureEngineer
-from automl.utils.Preprocess import Preprocess
-from automl.utils.HPOptimizer.RandomSearchHPOptimizer import RandomSearchHPOptimizer 
+from automl.feature_engineer import FeatureEngineer
+from automl.preprocess import Preprocess
+from automl.optimizers import RandomSearchOptimizer 
 
 from sklearn.experimental import enable_iterative_imputer
 import pandas as pd
 import os   
 
-from automl.utils.Enums import Task, Metric
+from automl.enums import Task, Metric
 
 
 sample_data = pd.DataFrame({
@@ -47,7 +47,7 @@ def test_selectBestModel():
     df = Preprocess('Outcome').fit_transform(df)
     df = FeatureEngineer('Outcome').fit_transform(df)
 
-    optimizer = RandomSearchHPOptimizer(task=Task.CLASSIFICATION, time_budget=10, metric=Metric.ACCURACY)
+    optimizer = RandomSearchOptimizer(task=Task.CLASSIFICATION, time_budget=10, metric=Metric.ACCURACY)
 
     optimizer.fit(df, 'Outcome', fast_mode=True)
     best_model = optimizer.getOptimalModel()

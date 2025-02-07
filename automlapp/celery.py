@@ -6,7 +6,7 @@ from celery import Celery
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'automl_backend.settings')
 
 # Create the Celery app instance
-app = Celery('automl')
+app = Celery('automlapp')
 
 # Load task modules from all registered Django app configs
 app.config_from_object('django.conf:settings', namespace='CELERY')

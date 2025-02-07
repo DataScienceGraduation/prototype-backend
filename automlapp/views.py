@@ -2,9 +2,9 @@ from django.shortcuts import render
 from django.views.decorators.http import require_POST, require_GET
 from django.views.decorators.csrf import csrf_exempt
 from django.http import JsonResponse
-from automl.models import ModelEntry
+from automlapp.models import ModelEntry
 import pandas as pd
-from automl.tasks import train_model_task
+from automlapp.tasks import train_model_task
 import joblib
 import json
 import ast

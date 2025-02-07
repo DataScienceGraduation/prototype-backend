@@ -1,8 +1,8 @@
 from celery import shared_task
 from .models import ModelEntry
-from .utils.HPOptimizer.RandomSearchHPOptimizer import RandomSearchHPOptimizer
-from .utils.Enums import Task, Metric
-from .utils.functions import createPipeline
+from automl.optimizers import RandomSearchOptimizer
+from automl.enums import Task, Metric
+from automl.functions import createPipeline
 import joblib
 import os
 import pandas as pd
@@ -23,7 +23,7 @@ def train_model_task(entry_id):
         entry.save()
         entry.status = df
         entry.save()
-        hpo = RandomSearchHPOptimizer(task=Task.parse(entry.task), time_budget=100, metric=Metric.MSE)
+        hpo = RandomSearchOptimizer(task=Task.parse(entry.task), time_budget=100, metric=Metric.MSE)
         hpo.fit(df, entry.target_variable)
         accuracy = hpo.getMetricValue()
         model = hpo.getOptimalModel()
