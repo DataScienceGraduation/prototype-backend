@@ -24,7 +24,7 @@ def train_model_task(entry_id):
         entry.status = df
         entry.save()
         hpo = RandomSearchOptimizer(task=Task.parse(entry.task), time_budget=5)
-        hpo.fit(df, df[entry.target_variable])
+        hpo.fit(df.drop(entry.target_variable, axis=1), df[entry.target_variable])
         accuracy = hpo.get_metric_value()
         model = hpo.get_optimal_model()
         entry.status = 'Saving Model'
