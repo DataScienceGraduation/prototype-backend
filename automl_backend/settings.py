@@ -30,6 +30,7 @@ ALLOWED_HOSTS = []
 
 # Application definition
 
+
 INSTALLED_APPS = [
     'django.contrib.admin',
     'django.contrib.auth',
@@ -40,6 +41,8 @@ INSTALLED_APPS = [
     'automlapp',
     'corsheaders',
 ]
+
+AUTH_USER_MODEL = 'automlapp.User'
 
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',

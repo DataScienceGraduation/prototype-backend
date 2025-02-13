@@ -1,17 +1,84 @@
 from django.shortcuts import render
+from django.conf import settings
 from django.views.decorators.http import require_POST, require_GET
 from django.views.decorators.csrf import csrf_exempt
 from django.http import JsonResponse
-from automlapp.models import ModelEntry
+from functools import wraps
+from automlapp.models import ModelEntry, User
 import pandas as pd
 from automlapp.tasks import train_model_task
 import joblib
 import json
 import ast
+import jwt
+
+JWT_ALGORITHM = 'HS256'
+JWT_SECRET = settings.SECRET_KEY
 
 # Create your views here.
+def jwt_authenticated(view_func):
+    @wraps(view_func)
+    def wrapped_view(request, *args, **kwargs):
+        auth_header = request.headers.get('Authorization')
+        if not auth_header or not auth_header.startswith('Bearer '):
+            return JsonResponse({'success': False, 'message': 'Authorization header missing or invalid'}, status=401)
+        
+        token = auth_header.split(' ')[1]
+        try:
+            payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+            request.jwt_payload = payload
+        except jwt.ExpiredSignatureError:
+            return JsonResponse({'success': False, 'message': 'Token expired'}, status=401)
+        except jwt.InvalidTokenError:
+            return JsonResponse({'success': False, 'message': 'Invalid token'}, status=401)
+        
+        return view_func(request, *args, **kwargs)
+    
+    return wrapped_view
+
 @csrf_exempt
 @require_POST
+def login(request):
+    try:
+        data = request.POST
+        user = User.objects.get(username=data['username'])
+        if user.check_password(data['password']):
+            token = jwt.encode({'username': user.username}, JWT_SECRET, algorithm=JWT_ALGORITHM)
+            return JsonResponse({'success': True, 'token': token}, status=200)
+        else:
+            return JsonResponse({'success': False, 'message': 'Invalid credentials'}, status=400)
+    except Exception as e:
+        print(f"Error in login: {e}")
+        return JsonResponse({'success': False, 'message': 'There was an error'}, status=500)
+
+
+
+@csrf_exempt
+@require_POST
+def register(request):
+    try:
+        data = request.POST
+        username = data['username']
+        password = data['password']
+        email = data['email']
+        if not username or not password or not email:
+            return JsonResponse({'success': False, 'message': 'Username or password not provided'}, status=400)
+        if User.objects.filter(username=username).exists():
+            return JsonResponse({'success': False, 'message': 'Username already exists'}, status=400)
+        
+        user = User.objects.create_user(username=username, password=password)
+        user.set_password(password)
+        user.save()
+        return JsonResponse({'success': True, 'message': 'User registered successfully'}, status=201)
+    except Exception as e:
+        print(f"Error in register: {e}")
+        return JsonResponse({'success': False, 'message': 'There was an error'}, status=500)
+
+
+
+@csrf_exempt
+@require_POST
+@jwt_authenticated
 def loadData(request):
     try:
         request_data = request.FILES
@@ -68,8 +135,13 @@ def loadData(request):
 
 @csrf_exempt
 @require_POST
+@jwt_authenticated
 def trainModel(request):
     try:
+        if not request.POST['name'] or not request.POST['description'] or not request.POST['task'] or not request.POST['target_variable']:
+            return JsonResponse({'success': False, 'message': 'Missing required fields'}, status=400)
+        if not User.objects.filter(ModelEntry=request.POST['id']).exists():
+            return JsonResponse({'success': False, 'message': 'Model not found'}, status=404)
         data = request.POST
         entry = ModelEntry.objects.get(id=data['id'])
         entry.name = data['name']
@@ -88,9 +160,10 @@ def trainModel(request):
 
 @csrf_exempt
 @require_GET
+@jwt_authenticated
 def getAllModels(request):
     try:
-        entries = ModelEntry.objects.all()
+        entries = User.objects.get(username=request.jwt_payload['username']).models.all()
         data = []
         for entry in entries:
             data.append({
@@ -138,9 +211,12 @@ def getModel(request):
 
 @csrf_exempt
 @require_POST
+@jwt_authenticated
 def infer(request):
     try:
         data = request.POST
+        if not User.objects.filter(ModelEntry=data['id']).exists():
+            return JsonResponse({'success': False, 'message': 'Model not found'}, status=404)
         entry = ModelEntry.objects.get(id=data['id'])
         model = joblib.load(f'models/{entry.id}.pkl')
         pl = joblib.load(f'pipelines/{entry.id}.pkl')

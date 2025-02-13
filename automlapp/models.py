@@ -1,4 +1,5 @@
 from django.db import models
+from django.contrib.auth.models import AbstractUser
 
 # Create your models here.
 class ModelEntry(models.Model):
@@ -12,3 +13,6 @@ class ModelEntry(models.Model):
     model_name = models.CharField(max_length=255)
     evaluation_metric = models.CharField(max_length=255)
     evaluation_metric_value = models.FloatField()
+
+class User(AbstractUser):
+    models = models.ManyToManyField(ModelEntry)
