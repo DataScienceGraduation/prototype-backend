@@ -249,4 +249,17 @@ def infer(request):
         if '0 sample' in str(e):
             return JsonResponse({'success': False, 'message': 'Provided Row is an outlier'}, status=400)
         print(f"Error in inference: {e}")
-        return JsonResponse({'success': False, 'message': 'There was an error'}, status=500)#
+        return JsonResponse({'success': False, 'message': 'There was an error'}, status=500)
+    
+@csrf_exempt
+@require_POST
+def is_valid_token(token):
+    try:
+        jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        return True
+    except jwt.ExpiredSignatureError:
+        return False
+    except jwt.InvalidTokenError:
+        return False
+    except Exception as e:
+        return False
