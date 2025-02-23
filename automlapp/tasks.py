@@ -11,7 +11,6 @@ import pandas as pd
 def train_model_task(entry_id):
     try:
         entry = ModelEntry.objects.get(id=entry_id)
-        # Simulate long model training process
         entry.status = 'Loading Data'
         entry.save()
         df = pd.read_csv(f'data/{entry.id}.csv')
@@ -21,16 +20,18 @@ def train_model_task(entry_id):
         df = pl.transform(df)
         entry.status = 'Model Selection and Training'
         entry.save()
-        entry.status = df
-        entry.save()
         hpo = RandomSearchOptimizer(task=Task.parse(entry.task), time_budget=100)
         hpo.fit(df.drop(entry.target_variable, axis=1), df[entry.target_variable])
         accuracy = hpo.get_metric_value()
         model = hpo.get_optimal_model()
         entry.status = 'Saving Model'
         entry.model_name = model.__class__.__name__
-        entry.evaluation_metric = 'Accuracy'
-        entry.evaluation_metric_value = accuracy
+        if entry.task == 'Classification':
+            entry.evaluation_metric = Metric.ACCURACY
+            entry.evaluation_metric_value = accuracy
+        else:
+            entry.evaluation_metric = Metric.RMSE
+            entry.evaluation_metric_value = accuracy
         entry.status = 'Done'
         entry.save()
         joblib.dump(model, f'models/{entry.id}.pkl')

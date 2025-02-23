@@ -110,8 +110,6 @@ def loadData(request):
                 features[column] = 'float'
             else:
                 features[column] = 'unknown'
-                
-
 
         entry = ModelEntry.objects.create(
             name="", 
@@ -125,9 +123,14 @@ def loadData(request):
             evaluation_metric_value=0
         )
 
+        User.objects.get(username=request.jwt_payload['username']).models.add(entry)
+
         df.to_csv(f'data/{entry.id}.csv', index=False)
 
-        return JsonResponse({'success': True, 'data': suggested_target_variables, 'id': entry.id}, status=200)         
+        entry.save()
+
+        feature_names = list(features.keys())
+        return JsonResponse({'success': True, 'features': feature_names, 'data': suggested_target_variables, 'id': entry.id}, status=200)         
     except Exception as e:
         print(f"Error in loading data: {e}")
         return JsonResponse({'success': False, 'message': 'There was an error'}, status=500)
@@ -140,7 +143,7 @@ def trainModel(request):
     try:
         if not request.POST['name'] or not request.POST['description'] or not request.POST['task'] or not request.POST['target_variable']:
             return JsonResponse({'success': False, 'message': 'Missing required fields'}, status=400)
-        if not User.objects.filter(ModelEntry=request.POST['id']).exists():
+        if not User.objects.filter(models=request.POST['id']).exists():
             return JsonResponse({'success': False, 'message': 'Model not found'}, status=404)
         data = request.POST
         entry = ModelEntry.objects.get(id=data['id'])
@@ -215,7 +218,7 @@ def getModel(request):
 def infer(request):
     try:
         data = request.POST
-        if not User.objects.filter(ModelEntry=data['id']).exists():
+        if not User.objects.filter(models=data['id']).exists():
             return JsonResponse({'success': False, 'message': 'Model not found'}, status=404)
         entry = ModelEntry.objects.get(id=data['id'])
         model = joblib.load(f'models/{entry.id}.pkl')
@@ -244,6 +247,8 @@ def infer(request):
         prediction = model.predict(df)
         print(f"Prediction: {prediction}")
         finalPrediction = prediction[0]
+        if entry.task == 'Classification' and len(df2[entry.target_variable].unique()) == 2:
+            finalPrediction = 'True' if finalPrediction == 1 else 'False'
         return JsonResponse({'success': True, 'prediction': str(finalPrediction)}, status=200)
     except Exception as e:
         if '0 sample' in str(e):
