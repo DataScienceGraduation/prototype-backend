@@ -227,20 +227,19 @@ def infer(request):
         print(data)
         list_of_features = ast.literal_eval(entry.list_of_features)
         print(list_of_features)
-        print("TEST")
-        for key, value in data.items():
-            print(key, value)
-            if list_of_features[key] == 'integer':
-                data[key] = int(value)
-            elif list_of_features[key] == 'float':
-                data[key] = float(value)
-        # add outcome to data
-        df = pd.DataFrame([data])
         df2 = pd.read_csv(f'data/{entry.id}.csv')
-        # get value of target variable
         target_variable_first_value = df2[entry.target_variable].iloc[0]
+        for key, value in data.items():
+            if key == entry.target_variable:
+                data[key] = target_variable_first_value
+                print(data[key])
+            print(key, data[key])
+            if list_of_features[key] == 'integer':
+                data[key] = int(data[key])
+            elif list_of_features[key] == 'float':
+                data[key] = float(data[key])
+        df = pd.DataFrame([data])
         df[entry.target_variable] = target_variable_first_value
-        print(df)
         df = pl.transform(df)
         df.drop(entry.target_variable, axis=1, inplace=True)
         print("Transformed Data")

@@ -20,7 +20,7 @@ def train_model_task(entry_id):
         df = pl.transform(df)
         entry.status = 'Model Selection and Training'
         entry.save()
-        hpo = RandomSearchOptimizer(task=Task.parse(entry.task), time_budget=100)
+        hpo = RandomSearchOptimizer(task=Task.parse(entry.task), time_budget=300)
         hpo.fit(df.drop(entry.target_variable, axis=1), df[entry.target_variable])
         accuracy = hpo.get_metric_value()
         model = hpo.get_optimal_model()
