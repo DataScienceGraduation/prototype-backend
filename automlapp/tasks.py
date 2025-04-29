@@ -29,7 +29,13 @@ def train_model_task(entry_id):
         if entry.task == 'Classification':
             entry.evaluation_metric = Metric.ACCURACY
             entry.evaluation_metric_value = accuracy
-        else:
+        elif entry.task == 'Regression':
+            entry.evaluation_metric = Metric.RMSE
+            entry.evaluation_metric_value = accuracy
+        elif entry.task == 'Clustering':
+            entry.evaluation_metric = Metric.SILHOUETTE
+            entry.evaluation_metric_value = accuracy
+        elif entry.task == 'TimeSeries':
             entry.evaluation_metric = Metric.RMSE
             entry.evaluation_metric_value = accuracy
         entry.status = 'Done'
