@@ -59,16 +59,22 @@ def register(request):
     try:
         data = request.POST
         username = data['username']
-        password = data['password']
+        first_name = data['first_name']
+        last_name = data['last_name']
         email = data['email']
+        password = data['password']
         if not username or not password or not email:
             return JsonResponse({'success': False, 'message': 'Username or password not provided'}, status=400)
         if User.objects.filter(username=username).exists():
             return JsonResponse({'success': False, 'message': 'Username already exists'}, status=400)
         
-        user = User.objects.create_user(username=username, password=password)
-        user.set_password(password)
-        user.save()
+        user = User.objects.create_user(
+            username=username,
+            password=password,
+            email=email,
+            first_name=first_name,
+            last_name=last_name
+        )
         return JsonResponse({'success': True, 'message': 'User registered successfully'}, status=201)
     except Exception as e:
         print(f"Error in register: {e}")
