@@ -96,31 +96,51 @@ def loadData(request):
         suggested_target_variables = []
         features = {}
         
-        for column in columns:
-            suggested_target_variables.append(column)
-            print(column, len(df[column].unique()), len(df), df[column].dtype)
-            if len(df[column].unique()) != len(df) and len(df[column].unique()) > 1 and df[column].dtype in ['int64', 'object', 'bool', 'float64']:
-                #suggested_target_variables.append(column)
-                pass
-            if len(df[column].unique()) == len(df) and len(df[column].unique()) > 1:
-                features[column] = 'unique'
-            elif len(df[column].unique()) == 1:
-                features[column] = 'constant'
-            elif len(df[column].unique()) < 10:
-                features[column] = [x for x in df[column].unique()]
-            elif df[column].dtype == 'object':
-                features[column] = 'categorical'
-            elif df[column].dtype == 'int64':
-                features[column] = 'integer'
-            elif df[column].dtype == 'float64':
-                features[column] = 'float'
-            else:
-                features[column] = 'unknown'
+        # Only suggest target variables if task is not clustering
+        task = request.POST.get('task', '')
+        if task != 'Clustering':
+            for column in columns:
+                suggested_target_variables.append(column)
+                print(column, len(df[column].unique()), len(df), df[column].dtype)
+                if len(df[column].unique()) != len(df) and len(df[column].unique()) > 1 and df[column].dtype in ['int64', 'object', 'bool', 'float64']:
+                    #suggested_target_variables.append(column)
+                    pass
+                if len(df[column].unique()) == len(df) and len(df[column].unique()) > 1:
+                    features[column] = 'unique'
+                elif len(df[column].unique()) == 1:
+                    features[column] = 'constant'
+                elif len(df[column].unique()) < 10:
+                    features[column] = [x for x in df[column].unique()]
+                elif df[column].dtype == 'object':
+                    features[column] = 'categorical'
+                elif df[column].dtype == 'int64':
+                    features[column] = 'integer'
+                elif df[column].dtype == 'float64':
+                    features[column] = 'float'
+                else:
+                    features[column] = 'unknown'
+        else:
+            # For clustering, analyze all columns as features
+            for column in columns:
+                if len(df[column].unique()) == len(df) and len(df[column].unique()) > 1:
+                    features[column] = 'unique'
+                elif len(df[column].unique()) == 1:
+                    features[column] = 'constant'
+                elif len(df[column].unique()) < 10:
+                    features[column] = [x for x in df[column].unique()]
+                elif df[column].dtype == 'object':
+                    features[column] = 'categorical'
+                elif df[column].dtype == 'int64':
+                    features[column] = 'integer'
+                elif df[column].dtype == 'float64':
+                    features[column] = 'float'
+                else:
+                    features[column] = 'unknown'
 
         entry = ModelEntry.objects.create(
             name="", 
             description="", 
-            task="", 
+            task=task, 
             target_variable="",
             list_of_features=features, 
             status='Data Loaded',
@@ -136,7 +156,10 @@ def loadData(request):
         entry.save()
 
         feature_names = list(features.keys())
-        return JsonResponse({'success': True, 'features': feature_names, 'data': suggested_target_variables, 'id': entry.id}, status=200)         
+        if entry.task != 'Clustering':
+            return JsonResponse({'success': True, 'features': feature_names, 'data': suggested_target_variables, 'id': entry.id}, status=200)         
+        else:
+            return JsonResponse({'success': True, 'features': feature_names, 'id': entry.id}, status=200)         
     except Exception as e:
         print(f"Error in loading data: {e}")
         return JsonResponse({'success': False, 'message': 'There was an error'}, status=500)
@@ -147,8 +170,11 @@ def loadData(request):
 @jwt_authenticated
 def trainModel(request):
     try:
-        if not request.POST['name'] or not request.POST['description'] or not request.POST['task'] or not request.POST['target_variable']:
+        if not request.POST['name'] or not request.POST['description'] or not request.POST['task']:
             return JsonResponse({'success': False, 'message': 'Missing required fields'}, status=400)
+        # Only require target_variable for non-clustering tasks
+        if request.POST['task'] != 'Clustering' and not request.POST['target_variable']:
+            return JsonResponse({'success': False, 'message': 'Target variable is required for non-clustering tasks'}, status=400)
         if not User.objects.filter(models=request.POST['id']).exists():
             return JsonResponse({'success': False, 'message': 'Model not found'}, status=404)
         data = request.POST
@@ -156,7 +182,7 @@ def trainModel(request):
         entry.name = data['name']
         entry.description = data['description']
         entry.task = data['task']
-        entry.target_variable = data['target_variable']
+        entry.target_variable = data['target_variable'] if 'target_variable' in data else ''
         entry.status = 'Model Training'
         entry.save()
         train_model_task.delay(entry.id)

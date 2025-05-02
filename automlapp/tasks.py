@@ -16,12 +16,27 @@ def train_model_task(entry_id):
         df = pd.read_csv(f'data/{entry.id}.csv')
         entry.status = 'Preprocessing Data'
         entry.save()
-        pl = createPipeline(df, entry.target_variable)
-        df = pl.transform(df)
+        
+        # Handle clustering differently since it doesn't need a target variable
+        if entry.task == 'Clustering':
+            pl = createPipeline(df, None)
+            df = pl.transform(df)
+            X = df  # For clustering, use all features
+        else:
+            pl = createPipeline(df, entry.target_variable)
+            df = pl.transform(df)
+            X = df.drop(entry.target_variable, axis=1)
+            y = df[entry.target_variable]
+            
         entry.status = 'Model Selection and Training'
         entry.save()
         hpo = RandomSearchOptimizer(task=Task.parse(entry.task), time_budget=300)
-        hpo.fit(df.drop(entry.target_variable, axis=1), df[entry.target_variable])
+        
+        if entry.task == 'Clustering':
+            hpo.fit(X, None)  # For clustering, no target variable needed
+        else:
+            hpo.fit(X, y)
+            
         accuracy = hpo.get_metric_value()
         model = hpo.get_optimal_model()
         entry.status = 'Saving Model'
