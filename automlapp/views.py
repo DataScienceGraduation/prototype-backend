@@ -104,6 +104,7 @@ def loadData(request):
                     parsed_col = pd.to_datetime(df[column], errors='coerce')
                     if parsed_col.notna().sum() / len(df[column]) > 0.8:
                         datetime_columns.append(column)
+                        features[column] = 'datetime'
                 except Exception as e:
                     print(f"Error parsing column {column} as datetime: {e}")
                     continue
