@@ -95,52 +95,46 @@ def loadData(request):
         columns = list(df.columns)
         suggested_target_variables = []
         features = {}
-        
-        # Only suggest target variables if task is not clustering
-        task = request.POST.get('task', '')
-        if task != 'Clustering':
-            for column in columns:
-                suggested_target_variables.append(column)
-                print(column, len(df[column].unique()), len(df), df[column].dtype)
-                if len(df[column].unique()) != len(df) and len(df[column].unique()) > 1 and df[column].dtype in ['int64', 'object', 'bool', 'float64']:
-                    #suggested_target_variables.append(column)
-                    pass
-                if len(df[column].unique()) == len(df) and len(df[column].unique()) > 1:
-                    features[column] = 'unique'
-                elif len(df[column].unique()) == 1:
-                    features[column] = 'constant'
-                elif len(df[column].unique()) < 10:
-                    features[column] = [x for x in df[column].unique()]
-                elif df[column].dtype == 'object':
-                    features[column] = 'categorical'
-                elif df[column].dtype == 'int64':
-                    features[column] = 'integer'
-                elif df[column].dtype == 'float64':
-                    features[column] = 'float'
-                else:
-                    features[column] = 'unknown'
-        else:
-            # For clustering, analyze all columns as features
-            for column in columns:
-                if len(df[column].unique()) == len(df) and len(df[column].unique()) > 1:
-                    features[column] = 'unique'
-                elif len(df[column].unique()) == 1:
-                    features[column] = 'constant'
-                elif len(df[column].unique()) < 10:
-                    features[column] = [x for x in df[column].unique()]
-                elif df[column].dtype == 'object':
-                    features[column] = 'categorical'
-                elif df[column].dtype == 'int64':
-                    features[column] = 'integer'
-                elif df[column].dtype == 'float64':
-                    features[column] = 'float'
-                else:
-                    features[column] = 'unknown'
+        datetime_columns = []
+
+
+        for column in columns:
+            if df[column].dtype == 'object':
+                try:
+                    parsed_col = pd.to_datetime(df[column], errors='coerce')
+                    if parsed_col.notna().sum() / len(df[column]) > 0.8:
+                        datetime_columns.append(column)
+                except Exception as e:
+                    print(f"Error parsing column {column} as datetime: {e}")
+                    continue
+
+        for column in columns:
+            suggested_target_variables.append(column)
+            print(column, len(df[column].unique()), len(df), df[column].dtype)
+            if len(df[column].unique()) != len(df) and len(df[column].unique()) > 1 and df[column].dtype in ['int64', 'object', 'bool', 'float64']:
+                pass
+            if len(df[column].unique()) == len(df) and len(df[column].unique()) > 1:
+                features[column] = 'unique'
+            elif len(df[column].unique()) == 1:
+                features[column] = 'constant'
+            elif len(df[column].unique()) < 10:
+                features[column] = [x for x in df[column].unique()]
+            elif df[column].dtype == 'object':
+                features[column] = 'categorical'
+            elif df[column].dtype == 'int64':
+                features[column] = 'integer'
+            elif df[column].dtype == 'float64':
+                features[column] = 'float'
+            else:
+                features[column] = 'unknown'
+            
+
+                
 
         entry = ModelEntry.objects.create(
             name="", 
             description="", 
-            task=task, 
+            task="", 
             target_variable="",
             list_of_features=features, 
             status='Data Loaded',
@@ -154,15 +148,13 @@ def loadData(request):
         df.to_csv(f'data/{entry.id}.csv', index=False)
 
         entry.save()
+        print(datetime_columns)
 
         feature_names = list(features.keys())
-        if entry.task != 'Clustering':
-            return JsonResponse({'success': True, 'features': feature_names, 'data': suggested_target_variables, 'id': entry.id}, status=200)         
-        else:
-            return JsonResponse({'success': True, 'features': feature_names, 'id': entry.id}, status=200)         
+        return JsonResponse({'success': True, 'features': feature_names, 'data': suggested_target_variables, "datetime_columns":datetime_columns, 'id': entry.id}, status=200)
     except Exception as e:
         print(f"Error in loading data: {e}")
-        return JsonResponse({'success': False, 'message': 'There was an error'}, status=500)
+        return JsonResponse({'success': False, 'message': 'There was an error'}, status=500)    
     
 
 @csrf_exempt
@@ -175,6 +167,12 @@ def trainModel(request):
         # Only require target_variable for non-clustering tasks
         if request.POST['task'] != 'Clustering' and not request.POST['target_variable']:
             return JsonResponse({'success': False, 'message': 'Target variable is required for non-clustering tasks'}, status=400)
+        # For time series tasks, require datetime_column and date_format
+        if request.POST['task'] == 'TimeSeries':
+            if not request.POST.get('datetime_column'):
+                return JsonResponse({'success': False, 'message': 'Datetime column is required for time series tasks'}, status=400)
+            if not request.POST.get('date_format'):
+                return JsonResponse({'success': False, 'message': 'Date format is required for time series tasks'}, status=400)
         if not User.objects.filter(models=request.POST['id']).exists():
             return JsonResponse({'success': False, 'message': 'Model not found'}, status=404)
         data = request.POST
@@ -183,6 +181,9 @@ def trainModel(request):
         entry.description = data['description']
         entry.task = data['task']
         entry.target_variable = data['target_variable'] if 'target_variable' in data else ''
+        if entry.task == 'TimeSeries':
+            entry.datetime_column = data['datetime_column']
+            entry.date_format = data['date_format'] 
         entry.status = 'Model Training'
         entry.save()
         train_model_task.delay(entry.id)
@@ -261,6 +262,18 @@ def infer(request):
         print(list_of_features)
         df2 = pd.read_csv(f'data/{entry.id}.csv')
         target_variable_first_value = df2[entry.target_variable].iloc[0]
+        
+        if entry.task == 'TimeSeries':
+            if entry.datetime_column in data:
+                try:
+                    parsed_date = pd.to_datetime(data[entry.datetime_column], format=entry.date_format)
+                    data[entry.datetime_column] = parsed_date.strftime('%d/%m/%y')
+                except Exception as e:
+                    return JsonResponse({
+                        'success': False, 
+                        'message': f'Invalid datetime format. Expected format: {entry.date_format}'
+                    }, status=400)
+        
         for key, value in data.items():
             if key == entry.target_variable:
                 data[key] = target_variable_first_value
@@ -270,16 +283,30 @@ def infer(request):
                 data[key] = int(data[key])
             elif list_of_features[key] == 'float':
                 data[key] = float(data[key])
+        
         df = pd.DataFrame([data])
         df[entry.target_variable] = target_variable_first_value
         df = pl.transform(df)
-        df.drop(entry.target_variable, axis=1, inplace=True)
-        print("Transformed Data")
-        prediction = model.predict(df)
-        print(f"Prediction: {prediction}")
-        finalPrediction = prediction[0]
-        if entry.task == 'Classification' and len(df2[entry.target_variable].unique()) == 2:
-            finalPrediction = 'True' if finalPrediction == 1 else 'False'
+        
+        if entry.task == 'TimeSeries':
+            # Get the last known value from the target variable
+            forecast_horizon = 1
+            try:
+                prediction = model.forecast(steps=forecast_horizon)
+                finalPrediction = prediction[0]
+            except Exception as e:
+                return JsonResponse({
+                    'success': False, 
+                    'message': f'Error in forecasting: {str(e)}'
+                }, status=400)
+        else:
+            df.drop(entry.target_variable, axis=1, inplace=True)
+            prediction = model.predict(df)
+            print(f"Prediction: {prediction}")
+            finalPrediction = prediction[0]
+            if entry.task == 'Classification' and len(df2[entry.target_variable].unique()) == 2:
+                finalPrediction = 'True' if finalPrediction == 1 else 'False'
+        
         return JsonResponse({'success': True, 'prediction': str(finalPrediction)}, status=200)
     except Exception as e:
         if '0 sample' in str(e):
