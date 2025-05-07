@@ -294,8 +294,13 @@ def infer(request):
             forecast_horizon = 1
             try:
                 prediction = model.forecast(steps=forecast_horizon)
-                finalPrediction = prediction[0]
+                finalPrediction = prediction.iloc[-1] if isinstance(prediction, pd.Series) else prediction.iloc[-1, 0]
+                return JsonResponse({
+                    'success': True, 
+                    'prediction': str(finalPrediction)
+                }, status=200)
             except Exception as e:
+                print(f"Error in forecasting: {e}")
                 return JsonResponse({
                     'success': False, 
                     'message': f'Error in forecasting: {str(e)}'
