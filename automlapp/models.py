@@ -13,6 +13,8 @@ class ModelEntry(models.Model):
     model_name = models.CharField(max_length=255)
     evaluation_metric = models.CharField(max_length=255)
     evaluation_metric_value = models.FloatField()
+    datetime_column = models.CharField(max_length=255, blank=True, null=True)
+    date_format = models.CharField(max_length=255, blank=True, null=True)
 
 class User(AbstractUser):
     models = models.ManyToManyField(ModelEntry)
