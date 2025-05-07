@@ -27,7 +27,6 @@ def train_model_task(entry_id):
         logger.info(f"Starting training for ModelEntry ID: {entry_id}")
         entry = ModelEntry.objects.get(id=entry_id)
         
-        # Load and preprocess data
         entry.status = 'Loading Data'
         entry.save()
         logger.info(f"Loading data for entry ID: {entry_id}")
@@ -36,29 +35,46 @@ def train_model_task(entry_id):
         entry.status = 'Preprocessing Data'
         entry.save()
         logger.info(f"Preprocessing data for entry ID: {entry_id}")
+        
+        # Handle time series specific preprocessing
+        if entry.task == 'TimeSeries':
+            if not entry.datetime_column:
+                raise ValueError("Datetime column is required for time series tasks")
+            if entry.datetime_column not in df.columns:
+                raise ValueError(f"Datetime column '{entry.datetime_column}' not found in the dataset")
+            try:
+                df[entry.datetime_column] = pd.to_datetime(df[entry.datetime_column], format=entry.date_format).dt.strftime('%d/%m/%y')
+            except Exception as e:
+                raise ValueError(f"Error converting datetime column: {str(e)}")
+            
         pipeline = createPipeline(df, entry.target_variable, task=entry.task)
         df_transformed = pipeline.transform(df)
 
-        # Train model
         entry.status = 'Model Selection and Training'
         entry.save()
         logger.info(f"Starting model selection and training for entry ID: {entry_id}")
-        optimizer = RandomSearchOptimizer(task=Task.parse(entry.task), time_budget=300)
+        
+        try:
+            task_enum = Task.parse(entry.task)
+        except Exception as e:
+            raise ValueError(f"Error parsing task type: {str(e)}")
+            
+        optimizer = RandomSearchOptimizer(task=task_enum, time_budget=300)
 
         if entry.task.lower() == 'clustering':
             optimizer.fit(df_transformed, None)
+        elif entry.task == 'TimeSeries':
+            optimizer.fit(None, df_transformed[entry.target_variable])
         else:
             optimizer.fit(
                 df_transformed.drop(entry.target_variable, axis=1),
                 df_transformed[entry.target_variable]
             )
-
-        # Save model and metrics
         entry.status = 'Saving Model'
         entry.save()
         logger.info(f"Saving model for entry ID: {entry_id}")
         model = optimizer.get_optimal_model()
-        accuracy = optimizer.get_metric_value()
+        metric_value = optimizer.get_metric_value()
         entry.model_name = model.__class__.__name__
 
         # Set evaluation metrics based on task type
@@ -69,10 +85,9 @@ def train_model_task(entry_id):
             'TimeSeries': Metric.RMSE
         }
         entry.evaluation_metric = metric_map.get(entry.task, Metric.ACCURACY)
-        entry.evaluation_metric_value = accuracy
+        entry.evaluation_metric_value = abs(metric_value) if entry.task == 'TimeSeries' else metric_value
         logger.info(f"Model metrics - Task: {entry.task}, Metric: {entry.evaluation_metric}, Value: {entry.evaluation_metric_value}")
 
-        # Save model and pipeline to disk
         os.makedirs('models', exist_ok=True)
         os.makedirs('pipelines', exist_ok=True)
         joblib.dump(model, f'models/{entry.id}.pkl')
@@ -86,5 +101,5 @@ def train_model_task(entry_id):
     except Exception as e:
         entry.status = 'Failed'
         entry.save()
-        logger.error(f"Error during model training for entry ID: {df.head()}, {entry_id}: {str(e)}")
+        logger.error(f"Error during model training for entry ID: {entry_id}: {str(e)}")
         raise
