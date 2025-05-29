@@ -11,9 +11,52 @@ import joblib
 import json
 import ast
 import jwt
+import matplotlib
+matplotlib.use('Agg')  # Use non-interactive backend
+import matplotlib.pyplot as plt
+import base64
+import io
 
 JWT_ALGORITHM = 'HS256'
 JWT_SECRET = settings.SECRET_KEY
+
+def generate_timeseries_plot(predictions, forecast_horizon, target_variable):
+    """
+    Generate a time series forecast plot for multiple timesteps and return it as a base64 encoded string
+    """
+    plt.figure(figsize=(12, 6))
+
+    # Multiple predictions - show as a line plot
+    x_values = list(range(1, len(predictions) + 1))
+    plt.plot(x_values, predictions, marker='o', linewidth=2.5, markersize=8,
+            color='#2E86AB', markerfacecolor='#A23B72', markeredgecolor='white', markeredgewidth=2)
+    plt.title(f'Time Series Forecast - Next {forecast_horizon} Timesteps', fontsize=14, fontweight='bold')
+    plt.xlabel('Future Timestep', fontsize=12)
+    plt.ylabel(target_variable, fontsize=12)
+    plt.grid(True, alpha=0.3)
+
+    # Add value annotations on points
+    for i, value in enumerate(predictions):
+        plt.annotate(f'{value:.2f}', (x_values[i], value),
+                    textcoords="offset points", xytext=(0,15), ha='center',
+                    fontsize=10, bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8))
+
+    # Set x-axis to show integer ticks only
+    plt.xticks(x_values)
+
+    plt.tight_layout()
+
+    # Save plot to base64 string
+    buffer = io.BytesIO()
+    plt.savefig(buffer, format='png', dpi=150, bbox_inches='tight', facecolor='white')
+    buffer.seek(0)
+    plot_data = buffer.getvalue()
+    buffer.close()
+    plt.close()  # Important: close the figure to free memory
+
+    # Encode to base64
+    plot_base64 = base64.b64encode(plot_data).decode('utf-8')
+    return plot_base64
 
 # Create your views here.
 def jwt_authenticated(view_func):
@@ -22,7 +65,7 @@ def jwt_authenticated(view_func):
         auth_header = request.headers.get('Authorization')
         if not auth_header or not auth_header.startswith('Bearer '):
             return JsonResponse({'success': False, 'message': 'Authorization header missing or invalid'}, status=401)
-        
+
         token = auth_header.split(' ')[1]
         try:
             payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
@@ -31,9 +74,9 @@ def jwt_authenticated(view_func):
             return JsonResponse({'success': False, 'message': 'Token expired'}, status=401)
         except jwt.InvalidTokenError:
             return JsonResponse({'success': False, 'message': 'Invalid token'}, status=401)
-        
+
         return view_func(request, *args, **kwargs)
-    
+
     return wrapped_view
 
 @csrf_exempt
@@ -67,7 +110,7 @@ def register(request):
             return JsonResponse({'success': False, 'message': 'Username or password not provided'}, status=400)
         if User.objects.filter(username=username).exists():
             return JsonResponse({'success': False, 'message': 'Username already exists'}, status=400)
-        
+
         user = User.objects.create_user(
             username=username,
             password=password,
@@ -128,16 +171,16 @@ def loadData(request):
                 features[column] = 'float'
             else:
                 features[column] = 'unknown'
-            
 
-                
+
+
 
         entry = ModelEntry.objects.create(
-            name="", 
-            description="", 
-            task="", 
+            name="",
+            description="",
+            task="",
             target_variable="",
-            list_of_features=features, 
+            list_of_features=features,
             status='Data Loaded',
             model_name="",
             evaluation_metric="",
@@ -155,8 +198,8 @@ def loadData(request):
         return JsonResponse({'success': True, 'features': feature_names, 'data': suggested_target_variables, "datetime_columns":datetime_columns, 'id': entry.id}, status=200)
     except Exception as e:
         print(f"Error in loading data: {e}")
-        return JsonResponse({'success': False, 'message': 'There was an error'}, status=500)    
-    
+        return JsonResponse({'success': False, 'message': 'There was an error'}, status=500)
+
 
 @csrf_exempt
 @require_POST
@@ -184,7 +227,7 @@ def trainModel(request):
         entry.target_variable = data['target_variable'] if 'target_variable' in data else ''
         if entry.task == 'TimeSeries':
             entry.datetime_column = data['datetime_column']
-            entry.date_format = data['date_format'] 
+            entry.date_format = data['date_format']
         entry.status = 'Model Training'
         entry.save()
         train_model_task.delay(entry.id)
@@ -193,7 +236,7 @@ def trainModel(request):
     except Exception as e:
         print(f"Error in training model: {e}")
         return JsonResponse({'success': False, 'message': 'There was an error'}, status=500)
-    
+
 
 @csrf_exempt
 @require_GET
@@ -221,7 +264,7 @@ def getAllModels(request):
     except Exception as e:
         print(f"Error in getting all models: {e}")
         return JsonResponse({'success': False, 'message': 'There was an error'}, status=500)
-    
+
 @csrf_exempt
 @require_GET
 def getModel(request):
@@ -259,67 +302,80 @@ def infer(request):
         pl = joblib.load(f'pipelines/{entry.id}.pkl')
         data = json.loads(data['data'])
         print(data)
-        list_of_features = ast.literal_eval(entry.list_of_features)
-        print(list_of_features)
-        df2 = pd.read_csv(f'data/{entry.id}.csv')
-        target_variable_first_value = df2[entry.target_variable].iloc[0]
-        
+
         if entry.task == 'TimeSeries':
-            if entry.datetime_column in data:
-                try:
-                    parsed_date = pd.to_datetime(data[entry.datetime_column], format=entry.date_format)
-                    data[entry.datetime_column] = parsed_date.strftime('%d/%m/%y')
-                except Exception as e:
-                    return JsonResponse({
-                        'success': False, 
-                        'message': f'Invalid datetime format. Expected format: {entry.date_format}'
-                    }, status=400)
-        
-        for key, value in data.items():
-            if key == entry.target_variable:
-                data[key] = target_variable_first_value
-                print(data[key])
-            print(key, data[key])
-            if list_of_features[key] == 'integer':
-                data[key] = int(data[key])
-            elif list_of_features[key] == 'float':
-                data[key] = float(data[key])
-        
-        df = pd.DataFrame([data])
-        df[entry.target_variable] = target_variable_first_value
-        df = pl.transform(df)
-        
-        if entry.task == 'TimeSeries':
-            # Get the last known value from the target variable
-            forecast_horizon = 1
+            # For time series, we don't need input data - just forecast horizon
+            forecast_horizon = int(request.POST.get('forecast_horizon', 1))
             try:
                 prediction = model.forecast(steps=forecast_horizon)
-                finalPrediction = prediction.iloc[-1] if isinstance(prediction, pd.Series) else prediction.iloc[-1, 0]
-                return JsonResponse({
-                    'success': True, 
-                    'prediction': str(finalPrediction)
-                }, status=200)
+
+                # Convert prediction to list format
+                if isinstance(prediction, pd.Series):
+                    predictions_list = prediction.tolist()
+                else:
+                    predictions_list = prediction.iloc[:, 0].tolist() if len(prediction.shape) > 1 else prediction.tolist()
+
+                # Round predictions to 2 decimal places
+                predictions_list = [round(pred, 2) for pred in predictions_list]
+
+                # Return response - only include plot for multiple timesteps
+                if forecast_horizon == 1:
+                    finalPrediction = predictions_list[0]
+                    return JsonResponse({
+                        'success': True,
+                        'prediction': str(finalPrediction)
+                    }, status=200)
+                else:
+                    # Generate plot only for multiple timesteps
+                    plot_base64 = generate_timeseries_plot(predictions_list, forecast_horizon, entry.target_variable)
+                    return JsonResponse({
+                        'success': True,
+                        'prediction': predictions_list,
+                        'forecast_horizon': forecast_horizon,
+                        'plot': plot_base64
+                    }, status=200)
             except Exception as e:
                 print(f"Error in forecasting: {e}")
                 return JsonResponse({
-                    'success': False, 
+                    'success': False,
                     'message': f'Error in forecasting: {str(e)}'
                 }, status=400)
         else:
+            # For non-time series models, process the input data
+            list_of_features = ast.literal_eval(entry.list_of_features)
+            print(list_of_features)
+            df2 = pd.read_csv(f'data/{entry.id}.csv')
+            target_variable_first_value = df2[entry.target_variable].iloc[0]
+
+            for key, value in data.items():
+                if key == entry.target_variable:
+                    data[key] = target_variable_first_value
+                    print(data[key])
+                print(key, data[key])
+                if key in list_of_features:
+                    if list_of_features[key] == 'integer':
+                        data[key] = int(value)
+                    elif list_of_features[key] == 'float':
+                        data[key] = float(value)
+
+            df = pd.DataFrame([data])
+            df[entry.target_variable] = target_variable_first_value
+            df = pl.transform(df)
+
             df.drop(entry.target_variable, axis=1, inplace=True)
             prediction = model.predict(df)
             print(f"Prediction: {prediction}")
             finalPrediction = prediction[0]
             if entry.task == 'Classification' and len(df2[entry.target_variable].unique()) == 2:
                 finalPrediction = 'True' if finalPrediction == 1 else 'False'
-        
+
         return JsonResponse({'success': True, 'prediction': str(finalPrediction)}, status=200)
     except Exception as e:
         if '0 sample' in str(e):
             return JsonResponse({'success': False, 'message': 'Provided Row is an outlier'}, status=400)
         print(f"Error in inference: {e}")
         return JsonResponse({'success': False, 'message': 'There was an error'}, status=500)
-    
+
 @csrf_exempt
 @require_POST
 def is_valid_token(token):
@@ -330,5 +386,5 @@ def is_valid_token(token):
         return False
     except jwt.InvalidTokenError:
         return False
-    except Exception as e:
+    except Exception:
         return False
