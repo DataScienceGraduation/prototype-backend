@@ -7,10 +7,35 @@ import joblib
 import os
 import pandas as pd
 import logging
+import numpy as np
+from automl.config import CLUSTERING_CONFIG
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.metrics import silhouette_score, davies_bouldin_score
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+def calculate_clustering_score(labels, features):
+    """
+    Calculate a custom clustering score combining Silhouette and Davies-Bouldin metrics.
+    Both metrics are scaled using MinMax scaling, and Davies-Bouldin is inverted.
+    """
+    # Calculate raw metrics
+    silhouette = silhouette_score(features, labels)
+    davies_bouldin = davies_bouldin_score(features, labels)
+    
+    # Invert Davies-Bouldin (since lower is better)
+    davies_bouldin = 1 / (1 + davies_bouldin)  # Adding 1 to avoid division by zero
+    
+    # Scale both metrics to [0,1] range
+    scaler = MinMaxScaler()
+    metrics = np.array([[silhouette], [davies_bouldin]])
+    scaled_metrics = scaler.fit_transform(metrics)
+    
+    # Calculate weighted score
+    final_score = 0.65 * scaled_metrics[0][0] + 0.35 * scaled_metrics[1][0]
+    return final_score, silhouette, davies_bouldin
 
 @shared_task
 def train_model_task(entry_id):
@@ -60,28 +85,45 @@ def train_model_task(entry_id):
             raise ValueError(f"Error parsing task type: {str(e)}")
             
         optimizer = RandomSearchOptimizer(task=task_enum, time_budget=300)
+        metric_value = None  # Initialize metric_value
 
         if entry.task.lower() == 'clustering':
+            max_clusters = int(np.sqrt(len(df_transformed)))
+            CLUSTERING_CONFIG["models"]["KMeans"]["n_clusters"] = list(np.arange(2, max_clusters + 1, 1))
             optimizer.fit(df_transformed, None)
+            
+            # Get the optimal model and calculate custom score
+            model = optimizer.get_optimal_model()
+            labels = model.predict(df_transformed)
+            custom_score, silhouette, davies_bouldin = calculate_clustering_score(labels, df_transformed)
+            metric_value = custom_score
+            
+            # Log individual metric values
+            logger.info(f"Clustering metrics - Silhouette: {silhouette:.4f}, Davies-Bouldin: {davies_bouldin:.4f}, Custom Score: {custom_score:.4f}")
+            
         elif entry.task == 'TimeSeries':
             optimizer.fit(None, df_transformed[entry.target_variable])
+            model = optimizer.get_optimal_model()
+            metric_value = optimizer.get_metric_value()
         else:
             optimizer.fit(
                 df_transformed.drop(entry.target_variable, axis=1),
                 df_transformed[entry.target_variable]
             )
+            model = optimizer.get_optimal_model()
+            metric_value = optimizer.get_metric_value()
+
         entry.status = 'Saving Model'
         entry.save()
         logger.info(f"Saving model for entry ID: {entry_id}")
-        model = optimizer.get_optimal_model()
-        metric_value = optimizer.get_metric_value()
         entry.model_name = model.__class__.__name__
 
         # Set evaluation metrics based on task type
         metric_map = {
             'Classification': Metric.ACCURACY,
             'Regression': Metric.RMSE,
-            'Clustering': Metric.SILHOUETTE,
+            #'Clustering': Metric.SILHOUETTE,
+            'Clustering': 'CustomClusteringScore',  # Changed from Metric.SILHOUETTE
             'TimeSeries': Metric.RMSE
         }
         entry.evaluation_metric = metric_map.get(entry.task, Metric.ACCURACY)
