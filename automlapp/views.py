@@ -83,7 +83,12 @@ def jwt_authenticated(view_func):
 @require_POST
 def login(request):
     try:
-        data = request.POST
+        # Handle both JSON and form data
+        if request.content_type == 'application/json':
+            data = json.loads(request.body)
+        else:
+            data = request.POST
+
         user = User.objects.get(username=data['username'])
         if user.check_password(data['password']):
             token = jwt.encode({'username': user.username}, JWT_SECRET, algorithm=JWT_ALGORITHM)
