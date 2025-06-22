@@ -55,6 +55,7 @@ jsonpatch==1.33
 jsonpointer==3.0.0
 jsonschema==4.24.0
 jsonschema-specifications==2025.4.1
+kaleido==0.2.1
 kiwisolver==1.4.8
 kombu==5.4.2
 kubernetes==32.0.1
@@ -91,6 +92,7 @@ packaging==24.2
 pandas==2.2.3
 pillow==11.2.1
 pinecone==7.0.2
+plotly==5.24.1
 pinecone-plugin-assistant==1.6.1
 pinecone-plugin-interface==0.0.7
 pluggy==1.5.0

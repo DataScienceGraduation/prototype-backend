@@ -36,6 +36,10 @@ class ChartDataAdmin(admin.ModelAdmin):
         ('Basic Information', {
             'fields': ('report', 'chart_type', 'title', 'description')
         }),
+        ('LLM Generation', {
+            'fields': ('llm_reasoning', 'chart_code'),
+            'classes': ('collapse',)
+        }),
         ('Chart Data', {
             'fields': ('chart_data', 'chart_config'),
             'classes': ('collapse',)

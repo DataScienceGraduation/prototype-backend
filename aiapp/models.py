@@ -59,6 +59,10 @@ class ChartData(models.Model):
     chart_config = models.JSONField(default=dict, help_text="Chart configuration (colors, layout, etc.)")
     chart_data = models.JSONField(default=dict, help_text="Chart data (labels, values, etc.)")
 
+    # LLM-generated content
+    chart_code = models.TextField(blank=True, help_text="LLM-generated Python code for the chart")
+    llm_reasoning = models.TextField(blank=True, help_text="LLM's reasoning for choosing and generating this chart")
+
     # Generated chart files
     chart_image_base64 = models.TextField(blank=True, help_text="Base64 encoded chart image")
     chart_html = models.TextField(blank=True, help_text="Interactive HTML chart")

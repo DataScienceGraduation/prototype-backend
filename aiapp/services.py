@@ -5,15 +5,185 @@ import base64
 import io
 import logging
 import os
+import json
 from typing import Dict, List, Any
 from django.conf import settings
 import google.generativeai as genai
 from celery import shared_task
+from google.generativeai.types import GenerationConfig
+import matplotlib.pyplot as plt
+
+# Try to import kaleido and configure it
+try:
+    import kaleido
+    KALEIDO_AVAILABLE = True
+    logger = logging.getLogger(__name__)
+    logger.info(f"Kaleido version {kaleido.__version__} loaded successfully")
+except ImportError as e:
+    KALEIDO_AVAILABLE = False
+    logger = logging.getLogger(__name__)
+    logger.warning(f"Kaleido not available: {e}")
+
+# Configure plotly to use kaleido if available
+if KALEIDO_AVAILABLE:
+    try:
+        import plotly.io as pio
+        pio.kaleido.scope.default_format = "png"
+        pio.kaleido.scope.default_engine = "kaleido"
+    except Exception as e:
+        logger.warning(f"Failed to configure Kaleido: {e}")
+        KALEIDO_AVAILABLE = False
+
+
 
 from automlapp.models import ModelEntry
 from .models import Report, ChartData, DataInsight
 
 logger = logging.getLogger(__name__)
+
+def safe_plotly_to_image(fig, format="png", width=600, height=400):
+    """Safely convert plotly figure to image with fallback to matplotlib"""
+    try:
+        if KALEIDO_AVAILABLE:
+            img_bytes = fig.to_image(format=format, width=width, height=height, engine="kaleido")
+            return base64.b64encode(img_bytes).decode('utf-8')
+        else:
+            logger.warning("Kaleido not available, skipping image generation")
+            return None
+    except Exception as e:
+        logger.error(f"Failed to generate image with Kaleido: {e}")
+        try:
+            # Try without specifying engine
+            img_bytes = fig.to_image(format=format, width=width, height=height)
+            return base64.b64encode(img_bytes).decode('utf-8')
+        except Exception as e2:
+            logger.error(f"Failed to generate image without engine: {e2}")
+            # Return None instead of crashing - frontend will handle missing images
+            logger.info("Returning None for image - frontend will show chart data without image")
+            return None
+
+
+
+
+def ensure_json_serializable(data):
+    """
+    Ensure data is JSON serializable by handling NaN, inf, and other problematic values
+    """
+    try:
+        if data is None:
+            return None
+        elif isinstance(data, dict):
+            result = {}
+            for k, v in data.items():
+                key = str(k) if k is not None else 'null'
+                result[key] = ensure_json_serializable(v)
+            return result
+        elif isinstance(data, (list, tuple)):
+            return [ensure_json_serializable(item) for item in data]
+        elif isinstance(data, (np.integer, int)):
+            # Handle potential overflow
+            try:
+                return int(data)
+            except (OverflowError, ValueError):
+                return str(data)
+        elif isinstance(data, (np.floating, float)):
+            if np.isnan(data) or np.isinf(data):
+                return None
+            try:
+                return round(float(data), 2)
+            except (OverflowError, ValueError):
+                return str(data)
+        elif isinstance(data, np.ndarray):
+            return ensure_json_serializable(data.tolist())
+        elif isinstance(data, pd.Series):
+            return ensure_json_serializable(data.tolist())
+        elif isinstance(data, pd.DataFrame):
+            return ensure_json_serializable(data.to_dict())
+        elif pd.isna(data):
+            return None
+        elif isinstance(data, str):
+            # Ensure string is valid UTF-8
+            try:
+                return str(data).encode('utf-8').decode('utf-8')
+            except UnicodeError:
+                return str(data).encode('utf-8', errors='replace').decode('utf-8')
+        elif isinstance(data, bool):
+            return bool(data)
+        elif hasattr(data, '__dict__'):
+            # Handle objects with attributes
+            return str(data)
+        else:
+            # Try to convert to string as fallback
+            try:
+                result = str(data)
+                # Test if the string representation is reasonable
+                if len(result) > 1000:  # Avoid extremely long strings
+                    return f"<{type(data).__name__} object>"
+                return result
+            except Exception:
+                logger.warning(f"Could not serialize data of type {type(data)}")
+                return f"<{type(data).__name__} object>"
+    except Exception as e:
+        logger.error(f"Error in ensure_json_serializable: {e}")
+        return None
+
+
+def validate_and_save_chart_data(report, chart_type, title, description, chart_data, chart_image_base64, chart_html):
+    """
+    Validate chart data and save it safely
+    """
+    try:
+        # Ensure data is JSON serializable
+        clean_data = ensure_json_serializable(chart_data)
+
+        # Additional validation - ensure clean_data is not None
+        if clean_data is None:
+            clean_data = {}
+
+        # Test JSON serialization with detailed error handling
+        try:
+            json_str = json.dumps(clean_data)
+            logger.info(f"Chart data JSON validation passed for {title}. Data size: {len(json_str)} chars")
+        except (TypeError, ValueError) as json_error:
+            logger.error(f"JSON serialization failed for {title}: {json_error}")
+            logger.error(f"Problematic data: {clean_data}")
+            # Fallback to empty dict
+            clean_data = {'error': 'JSON serialization failed', 'original_error': str(json_error)}
+
+        # Save the chart
+        chart = ChartData.objects.create(
+            report=report,
+            chart_type=chart_type,
+            title=title,
+            description=description,
+            chart_data=clean_data,
+            chart_image_base64=chart_image_base64 or '',
+            chart_html=chart_html or ''
+        )
+        logger.info(f"Successfully saved chart: {title} (ID: {chart.id})")
+        return chart
+
+    except Exception as e:
+        logger.error(f"Error saving chart data for {title}: {e}")
+        logger.error(f"Chart data type: {type(chart_data)}")
+        logger.error(f"Chart data content: {chart_data}")
+
+        # Save a minimal chart with error info
+        try:
+            error_chart = ChartData.objects.create(
+                report=report,
+                chart_type='error',
+                title=f"Error: {title}",
+                description=f"Chart generation failed: {str(e)}",
+                chart_data={'error': str(e), 'chart_type': chart_type},
+                chart_image_base64='',
+                chart_html=f'<div>Error: {str(e)}</div>'
+            )
+            logger.info(f"Created error chart for failed {title}")
+            return error_chart
+        except Exception as fallback_error:
+            logger.error(f"Failed to create error chart: {fallback_error}")
+            raise e
 
 @shared_task(bind=True)
 def generate_report_async(self, model_entry_id: int, report_type: str = 'analysis'):
@@ -33,11 +203,9 @@ def generate_report_async(self, model_entry_id: int, report_type: str = 'analysi
         return report.id
     except Exception as e:
         logger.error(f"Celery task failed for model {model_entry_id}: {e}")
-        # Update task state to failure
-        self.update_state(
-            state='FAILURE',
-            meta={'error': str(e), 'model_entry_id': model_entry_id}
-        )
+        # By re-raising the exception, we let Celery handle the failure state automatically.
+        # This is more robust than manually updating the state. The generate_report_with_progress
+        # method already handles updating the Report model's status in the database.
         raise
 
 class ReportGenerationService:
@@ -118,25 +286,36 @@ class ReportGenerationService:
                 current_step='Loading training data...'
             )
 
-            update_progress(25, 'Loading training data...')
-            # Load training data
+            update_progress(25, 'Loading and preprocessing data...')
+            # Load raw training data
             data_file_path = f'data/{model_entry.id}.csv'
             if not os.path.exists(data_file_path):
                 raise FileNotFoundError(f"Training data file not found: {data_file_path}")
-            df = pd.read_csv(data_file_path)
+            df_raw = pd.read_csv(data_file_path)
 
-            update_progress(40, 'Generating charts...')
-            # Generate different types of charts based on model task
-            self._generate_charts_for_task(report, df, model_entry)
+            # Load the preprocessing pipeline and transform the data to get the actual model input
+            pipeline_path = f'pipelines/{model_entry.id}.pkl'
+            if not os.path.exists(pipeline_path):
+                raise FileNotFoundError(f"Pipeline file not found: {pipeline_path}")
+
+            import joblib
+            pipeline = joblib.load(pipeline_path)
+            df = pipeline.transform(df_raw)
+
+            logger.info(f"Using preprocessed data for insights. Raw shape: {df_raw.shape}, Processed shape: {df.shape}")
+
+            update_progress(40, 'Generating charts with LLM...')
+            # Generate charts using the LLM
+            self._generate_charts_with_llm(report, df, model_entry)
 
             update_progress(65, 'Generating data insights...')
-            # Generate data insights
-            self._generate_data_insights(report, df, model_entry)
+            # Generate data insights using both raw and processed data
+            self._generate_data_insights(report, df, model_entry, df_raw)
 
             update_progress(80, 'Generating AI insights...')
-            # Generate AI insights using Gemini
+            # Generate AI insights using Gemini with both datasets
             if self.gemini_model:
-                ai_insights = self._generate_ai_insights(report, df, model_entry)
+                ai_insights = self._generate_ai_insights(report, df, model_entry, df_raw)
                 report.ai_insights = ai_insights
 
             update_progress(95, 'Finalizing report...')
@@ -157,380 +336,610 @@ class ReportGenerationService:
                 report.save()
             raise
 
-    def _generate_charts_for_task(self, report: Report, df: pd.DataFrame, model_entry: ModelEntry):
-        """Generate charts based on the model task type"""
-        task = model_entry.task
+    def _generate_charts_with_llm(self, report: Report, df: pd.DataFrame, model_entry: ModelEntry):
+        """
+        Use an LLM to analyze the dataframe, suggest the most suitable charts based on data characteristics,
+        generate sophisticated Python code for them, execute the code, and save the results.
+        """
+        if not self.gemini_model:
+            logger.warning("Gemini model not available. Skipping LLM-based chart generation.")
+            return
 
         try:
-            if task == 'Classification':
-                self._generate_classification_charts(report, df, model_entry)
-            elif task == 'Regression':
-                self._generate_regression_charts(report, df, model_entry)
-            elif task == 'TimeSeries':
-                self._generate_timeseries_charts(report, df, model_entry)
-            elif task == 'Clustering':
-                self._generate_clustering_charts(report, df, model_entry)
+            # Prepare comprehensive data analysis for the LLM
+            df_head = df.head().to_string()
+            df_tail = df.tail().to_string()
+            
+            with io.StringIO() as buf:
+                df.info(buf=buf)
+                df_info_str = buf.getvalue()
 
-            # Generate common charts for all tasks
-            self._generate_common_charts(report, df, model_entry)
-        except Exception as e:
-            logger.error(f"Error generating charts for task {task}: {e}")
-            # Create a simple error chart instead of failing completely
-            ChartData.objects.create(
-                report=report,
-                chart_type='error',
-                title="Chart Generation Error",
-                description=f"Error generating charts: {str(e)}",
-                chart_data={'error': str(e)},
-                chart_image_base64='',
-                chart_html=f'<div>Error generating charts: {str(e)}</div>'
-            )
-
-    def _generate_classification_charts(self, report: Report, df: pd.DataFrame, model_entry: ModelEntry):
-        """Generate charts specific to classification tasks"""
-        target_col = model_entry.target_variable
-
-        # Class distribution pie chart
-        class_counts = df[target_col].value_counts()
-        pie_chart = self._create_pie_chart(
-            labels=class_counts.index.tolist(),
-            values=class_counts.values.tolist(),
-            title=f"Class Distribution - {target_col}"
-        )
-
-        ChartData.objects.create(
-            report=report,
-            chart_type='pie',
-            title=f"Class Distribution",
-            description=f"Distribution of classes in the target variable '{target_col}'",
-            chart_data={
-                'labels': class_counts.index.tolist(),
-                'values': class_counts.values.tolist()
-            },
-            chart_image_base64=pie_chart['image'],
-            chart_html=pie_chart['html']
-        )
-
-    def _generate_regression_charts(self, report: Report, df: pd.DataFrame, model_entry: ModelEntry):
-        """Generate charts specific to regression tasks"""
-        target_col = model_entry.target_variable
-
-        # Target variable distribution
-        hist_chart = self._create_histogram(
-            values=df[target_col].dropna().tolist(),
-            title=f"Distribution of {target_col}"
-        )
-
-        # Generate chart explanation
-        hist_values = df[target_col].dropna().tolist()
-        hist_explanation = self._generate_chart_explanation(
-            chart_type='histogram',
-            data={'values': hist_values},
-            title=f"Target Variable Distribution",
-            context=f"Distribution analysis of {target_col} showing data spread and patterns"
-        )
-
-        ChartData.objects.create(
-            report=report,
-            chart_type='histogram',
-            title=f"Target Variable Distribution",
-            description=hist_explanation,
-            chart_data={'values': [float(x) for x in hist_values]},
-            chart_image_base64=hist_chart['image'],
-            chart_html=hist_chart['html']
-        )
-
-    def _generate_timeseries_charts(self, report: Report, df: pd.DataFrame, model_entry: ModelEntry):
-        """Generate charts specific to time series tasks"""
-        target_col = model_entry.target_variable
-        datetime_col = getattr(model_entry, 'datetime_column', None)
-
-        # If no datetime column is specified, try to find one
-        if not datetime_col:
+            # Calculate key data characteristics
+            numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+            categorical_cols = df.select_dtypes(include=['object']).columns.tolist()
+            datetime_cols = []
+            
+            # Detect datetime columns
             for col in df.columns:
                 if df[col].dtype == 'object':
                     try:
                         pd.to_datetime(df[col], errors='raise')
-                        datetime_col = col
-                        break
+                        datetime_cols.append(col)
                     except:
                         continue
 
-        if datetime_col and datetime_col in df.columns:
-            # Time series line chart
-            df_sorted = df.sort_values(datetime_col)
-            line_chart = self._create_line_chart(
-                x=df_sorted[datetime_col].tolist(),
-                y=df_sorted[target_col].tolist(),
-                title=f"Time Series - {target_col}"
-            )
+            # Calculate statistical summaries
+            numeric_summary = {}
+            if numeric_cols:
+                numeric_summary = df[numeric_cols].describe().to_dict()
+                # Add correlation analysis if multiple numeric columns
+                if len(numeric_cols) > 1:
+                    correlations = df[numeric_cols].corr().round(3).to_dict()
 
-            # Generate chart explanation
-            chart_explanation = self._generate_chart_explanation(
-                chart_type='line',
-                data={'x': df_sorted[datetime_col], 'y': df_sorted[target_col]},
-                title=f"Time Series Trend",
-                context=f"Sales data from {df_sorted[datetime_col].min()} to {df_sorted[datetime_col].max()}"
-            )
+            # Categorical analysis
+            categorical_summary = {}
+            for col in categorical_cols:
+                if col in df.columns:
+                    value_counts = df[col].value_counts()
+                    categorical_summary[col] = {
+                        'unique_count': int(value_counts.nunique()),
+                        'top_values': value_counts.head(5).to_dict(),
+                        'missing_count': int(df[col].isnull().sum())
+                    }
 
-            ChartData.objects.create(
+            # Target variable analysis
+            target_analysis = {}
+            if model_entry.target_variable and model_entry.target_variable in df.columns:
+                target_col = df[model_entry.target_variable]
+                if model_entry.task == 'Classification':
+                    target_analysis = {
+                        'type': 'classification',
+                        'unique_classes': int(target_col.nunique()),
+                        'class_distribution': target_col.value_counts().to_dict(),
+                        'is_balanced': bool(target_col.value_counts().std() / target_col.value_counts().mean() < 0.5)
+                    }
+                elif model_entry.task == 'Regression':
+                    target_analysis = {
+                        'type': 'regression',
+                        'mean': float(target_col.mean()),
+                        'std': float(target_col.std()),
+                        'min': float(target_col.min()),
+                        'max': float(target_col.max()),
+                        'skewness': float(target_col.skew()),
+                        'kurtosis': float(target_col.kurtosis())
+                    }
+                elif model_entry.task == 'TimeSeries':
+                    target_analysis = {
+                        'type': 'timeseries',
+                        'mean': float(target_col.mean()),
+                        'std': float(target_col.std()),
+                        'trend': 'increasing' if target_col.iloc[-1] > target_col.iloc[0] else 'decreasing',
+                        'volatility': float(target_col.std() / target_col.mean()) if target_col.mean() != 0 else 0
+                    }
+
+            # Create sophisticated prompt for data-driven chart recommendations
+            prompt = f"""
+            You are an expert data scientist and business analyst specializing in creating insightful, sophisticated data visualizations. Your task is to analyze this dataset and recommend the MOST SUITABLE and INSIGHTFUL charts that will provide maximum business value.
+
+            ## DATASET ANALYSIS CONTEXT
+            **Model Task**: {model_entry.task}
+            **Target Variable**: {model_entry.target_variable}
+            **Dataset Shape**: {df.shape[0]} rows × {df.shape[1]} columns
+
+            **Data Types**:
+            - Numeric Features: {len(numeric_cols)} ({', '.join(numeric_cols) if len(numeric_cols) <= 5 else ', '.join(numeric_cols[:5]) + '...'})
+            - Categorical Features: {len(categorical_cols)} ({', '.join(categorical_cols) if len(categorical_cols) <= 5 else ', '.join(categorical_cols[:5]) + '...'})
+            - Datetime Features: {len(datetime_cols)} ({', '.join(datetime_cols) if datetime_cols else 'None'})
+
+            **Target Variable Analysis**:
+            {json.dumps(target_analysis, indent=2)}
+
+            **Numeric Features Summary**:
+            {json.dumps({k: {sk: round(sv, 3) if isinstance(sv, float) else sv for sk, sv in v.items()} for k, v in numeric_summary.items()}, indent=2)}
+
+            **Categorical Features Summary**:
+            {json.dumps(categorical_summary, indent=2)}
+
+            **Dataset Sample**:
+            {df_head}
+
+            ## YOUR TASK
+            Based on this comprehensive data analysis, recommend 3-5 EXCEPTIONAL charts that will provide the most valuable insights for business stakeholders. 
+
+            **Requirements**:
+            1. **Data-Driven Selection**: Choose chart types based on actual data characteristics, not predefined options
+            2. **Business Focus**: Each chart should answer a specific business question or reveal actionable insights
+            3. **Sophistication**: Use advanced visualization techniques when appropriate (subplots, annotations, custom styling)
+            4. **Uniqueness**: Avoid generic charts - create visualizations that are specifically tailored to this dataset
+            5. **Storytelling**: Each chart should tell a compelling story about the data
+
+            **Chart Types to Consider** (but not limited to):
+            - Distribution plots (histograms, box plots, violin plots, density plots)
+            - Relationship plots (scatter plots, correlation heatmaps, pair plots)
+            - Time series plots (line charts, seasonal decomposition, trend analysis)
+            - Composition plots (stacked bar charts, waterfall charts, sunburst charts)
+            - Comparison plots (grouped bar charts, radar charts, parallel coordinates)
+            - Advanced plots (3D scatter plots, contour plots, bubble charts, treemaps)
+
+            For each recommended chart, provide:
+            1. **Chart Type**: The specific type of visualization
+            2. **Business Question**: What business question does this chart answer?
+            3. **Data Justification**: Why is this chart type most suitable for this specific data?
+            4. **Sophisticated Python Code**: Complete, production-ready code using plotly.graph_objects
+            5. **Detailed Analysis**: Comprehensive explanation of what the chart reveals and its business implications
+
+            **Code Requirements**:
+            - Use plotly.graph_objects (imported as `go`)
+            - Include sophisticated styling (colors, fonts, layouts, annotations)
+            - Add interactive elements where appropriate
+            - Handle edge cases (missing data, outliers, etc.)
+            - Use subplots for complex visualizations
+            - Include proper titles, axis labels, and legends
+            - The DataFrame is available as `df`
+
+            Return your response as a JSON array with this exact structure:
+            ```json
+            [
+                {{
+                    "chart_type": "specific_chart_type",
+                    "business_question": "What specific business question does this answer?",
+                    "data_justification": "Why this chart type is perfect for this data",
+                    "python_code": "Complete plotly code that creates a variable named 'fig'",
+                    "detailed_analysis": "Comprehensive 4-6 sentence analysis explaining what the chart reveals, key patterns, outliers, trends, and specific business insights. Focus on actionable insights and what stakeholders should learn from this visualization."
+                }}
+            ]
+            ```
+
+            **IMPORTANT**: Focus on creating unique, sophisticated visualizations that are specifically tailored to this dataset's characteristics. Don't create generic charts - make each one tell a compelling story about the data.
+            """
+
+            # Call the LLM with JSON response type
+            generation_config = GenerationConfig(response_mime_type="application/json")
+            response = self.gemini_model.generate_content(prompt, generation_config=generation_config)
+            
+            logger.info(f"LLM response received for chart generation. Response length: {len(response.text)}")
+            logger.info(f"LLM response preview: {response.text[:500]}...")
+            
+            chart_suggestions = json.loads(response.text)
+            logger.info(f"Successfully parsed {len(chart_suggestions)} chart suggestions from LLM")
+
+            # Process each sophisticated chart suggestion
+            for suggestion in chart_suggestions:
+                chart_type = suggestion.get('chart_type')
+                business_question = suggestion.get('business_question')
+                data_justification = suggestion.get('data_justification')
+                python_code = suggestion.get('python_code')
+                detailed_analysis = suggestion.get('detailed_analysis')
+
+                if not all([chart_type, business_question, data_justification, python_code, detailed_analysis]):
+                    logger.warning(f"Skipping incomplete chart suggestion: {suggestion}")
+                    continue
+
+                try:
+                    # Execute the sophisticated generated code
+                    local_scope = {'df': df, 'go': go, 'pd': pd, 'np': np, 'plt': plt if 'plt' in globals() else None}
+                    exec(python_code, globals(), local_scope)
+                    fig = local_scope.get('fig')
+
+                    if not isinstance(fig, go.Figure):
+                        logger.error(f"Generated code for chart '{chart_type}' did not produce a plotly Figure object.")
+                        continue
+
+                    # Generate high-quality image and HTML from the figure
+                    img_base64 = safe_plotly_to_image(fig, format="png", width=1000, height=600)
+                    html = fig.to_html(include_plotlyjs='cdn', div_id=f"chart_{hash(chart_type + business_question)}")
+
+                    # Create comprehensive title and description
+                    chart_title = f"{chart_type.replace('_', ' ').title()}: {business_question}"
+                    chart_description = f"{detailed_analysis}\n\n**Data Justification**: {data_justification}"
+
+                    # Save the sophisticated LLM-generated chart
+                    self._save_llm_chart(
+                        report=report,
+                        chart_type=chart_type,
+                        title=chart_title,
+                        description=chart_description,
+                        llm_reasoning=data_justification,
+                        chart_code=python_code,
+                        chart_data={},  # Data is embedded in the visualization
+                        chart_image_base64=img_base64,
+                        chart_html=html
+                    )
+                    
+                    logger.info(f"Successfully generated sophisticated chart: {chart_type} - {business_question}")
+                    
+                except Exception as e:
+                    logger.error(f"Failed to generate sophisticated chart '{chart_type}': {e}")
+                    logger.error(f"Python code that failed:\n{python_code}")
+                    
+                    # Save error information for debugging
+                    validate_and_save_chart_data(
+                        report=report,
+                        chart_type='error',
+                        title=f"Chart Generation Error: {chart_type}",
+                        description=f"Failed to generate sophisticated chart: {str(e)}\n\nBusiness Question: {business_question}\n\nCode:\n{python_code}",
+                        chart_data={'error': str(e), 'code': python_code, 'business_question': business_question},
+                        chart_image_base64='',
+                        chart_html=f'<div>Error: {str(e)}</div>'
+                    )
+
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse LLM JSON response: {e}\nLLM Response Text: {response.text}")
+        except Exception as e:
+            logger.error(f"An error occurred during sophisticated LLM chart generation: {e}")
+            DataInsight.objects.create(
                 report=report,
-                chart_type='line',
-                title=f"Time Series Trend",
-                description=chart_explanation,
-                chart_data={
-                    'x': [str(x) for x in df_sorted[datetime_col].tolist()],
-                    'y': [float(x) for x in df_sorted[target_col].tolist()]
+                insight_type='data_distribution',
+                title="Sophisticated Chart Generation Failed",
+                description=f"The process of generating sophisticated charts with the AI failed: {str(e)}",
+                insight_data={'error': str(e)},
+                priority=1
+            )
+
+    def _save_llm_chart(self, report, chart_type, title, description, llm_reasoning, chart_code, chart_data, chart_image_base64, chart_html):
+        """
+        Saves a chart generated by the LLM.
+        """
+        try:
+            clean_data = ensure_json_serializable(chart_data)
+            if clean_data is None:
+                clean_data = {}
+
+            chart = ChartData.objects.create(
+                report=report,
+                chart_type=chart_type,
+                title=title,
+                description=description,
+                llm_reasoning=llm_reasoning,
+                chart_code=chart_code,
+                chart_data=clean_data,
+                chart_image_base64=chart_image_base64 or '',
+                chart_html=chart_html or ''
+            )
+            logger.info(f"Successfully saved LLM-generated chart: {title} (ID: {chart.id})")
+            return chart
+        except Exception as e:
+            logger.error(f"Error saving LLM chart data for {title}: {e}")
+            raise e
+
+    def _generate_data_insights(self, report: Report, df: pd.DataFrame, model_entry: ModelEntry, df_raw: pd.DataFrame = None):
+        """Generate enhanced data insights for the report using both raw and processed data"""
+
+        # Data preprocessing impact insight
+        if df_raw is not None:
+            rows_removed = df_raw.shape[0] - df.shape[0]
+            cols_removed = df_raw.shape[1] - df.shape[1]
+
+            DataInsight.objects.create(
+                report=report,
+                insight_type='data_distribution',
+                title="Data Preprocessing Impact",
+                description=f"Preprocessing pipeline transformed {df_raw.shape[0]} rows × {df_raw.shape[1]} columns to {df.shape[0]} rows × {df.shape[1]} columns. {rows_removed} rows and {cols_removed} columns were removed during preprocessing.",
+                insight_data={
+                    'raw_rows': int(df_raw.shape[0]),
+                    'raw_columns': int(df_raw.shape[1]),
+                    'processed_rows': int(df.shape[0]),
+                    'processed_columns': int(df.shape[1]),
+                    'rows_removed': int(rows_removed),
+                    'columns_removed': int(cols_removed),
+                    'data_retention_rate': round(float(df.shape[0] / df_raw.shape[0] * 100), 2)
                 },
-                chart_image_base64=line_chart['image'],
-                chart_html=line_chart['html']
+                priority=1
             )
 
-    def _generate_clustering_charts(self, report: Report, df: pd.DataFrame, model_entry: ModelEntry):
-        """Generate charts specific to clustering tasks"""
-        # Feature correlation heatmap
-        numeric_cols = df.select_dtypes(include=[np.number]).columns
-        if len(numeric_cols) > 1:
-            corr_matrix = df[numeric_cols].corr()
-            heatmap_chart = self._create_correlation_heatmap(
-                correlation_matrix=corr_matrix,
-                title="Feature Correlation Matrix"
-            )
-
-            ChartData.objects.create(
-                report=report,
-                chart_type='correlation',
-                title="Feature Correlation Matrix",
-                description="Correlation between numeric features",
-                chart_data=corr_matrix.to_dict(),
-                chart_image_base64=heatmap_chart['image'],
-                chart_html=heatmap_chart['html']
-            )
-
-    def _generate_common_charts(self, report: Report, df: pd.DataFrame, model_entry: ModelEntry):
-        """Generate common charts for all task types"""
-        # Missing values chart
-        missing_data = df.isnull().sum()
-        missing_data = missing_data[missing_data > 0]
-
-        if len(missing_data) > 0:
-            bar_chart = self._create_bar_chart(
-                x=missing_data.index.tolist(),
-                y=missing_data.values.tolist(),
-                title="Missing Values by Feature"
-            )
-
-            ChartData.objects.create(
-                report=report,
-                chart_type='bar',
-                title="Missing Values Analysis",
-                description="Number of missing values per feature",
-                chart_data={
-                    'x': missing_data.index.tolist(),
-                    'y': [int(x) for x in missing_data.values.tolist()]
-                },
-                chart_image_base64=bar_chart['image'],
-                chart_html=bar_chart['html']
-            )
-
-    def _create_pie_chart(self, labels: List[str], values: List[float], title: str) -> Dict[str, str]:
-        """Create a pie chart using Plotly"""
-        fig = go.Figure(data=[go.Pie(
-            labels=labels,
-            values=values,
-            hole=0.3,
-            textinfo='label+percent',
-            textposition='outside'
-        )])
-
-        fig.update_layout(
-            title=title,
-            font=dict(size=12),
-            showlegend=True,
-            width=600,
-            height=400
-        )
-
-        # Generate base64 image
-        img_bytes = fig.to_image(format="png", width=600, height=400)
-        img_base64 = base64.b64encode(img_bytes).decode('utf-8')
-
-        # Generate HTML
-        html = fig.to_html(include_plotlyjs='cdn', div_id=f"chart_{hash(title)}")
-
-        return {'image': img_base64, 'html': html}
-
-    def _create_line_chart(self, x: List, y: List[float], title: str) -> Dict[str, str]:
-        """Create a line chart using Plotly"""
-        fig = go.Figure(data=[go.Scatter(
-            x=x,
-            y=y,
-            mode='lines+markers',
-            line=dict(width=2),
-            marker=dict(size=6)
-        )])
-
-        fig.update_layout(
-            title=title,
-            xaxis_title="Time",
-            yaxis_title="Value",
-            font=dict(size=12),
-            width=800,
-            height=400
-        )
-
-        img_bytes = fig.to_image(format="png", width=800, height=400)
-        img_base64 = base64.b64encode(img_bytes).decode('utf-8')
-        html = fig.to_html(include_plotlyjs='cdn', div_id=f"chart_{hash(title)}")
-
-        return {'image': img_base64, 'html': html}
-
-    def _create_histogram(self, values: List[float], title: str) -> Dict[str, str]:
-        """Create a histogram using Plotly"""
-        fig = go.Figure(data=[go.Histogram(x=values, nbinsx=30)])
-
-        fig.update_layout(
-            title=title,
-            xaxis_title="Value",
-            yaxis_title="Frequency",
-            font=dict(size=12),
-            width=600,
-            height=400
-        )
-
-        img_bytes = fig.to_image(format="png", width=600, height=400)
-        img_base64 = base64.b64encode(img_bytes).decode('utf-8')
-        html = fig.to_html(include_plotlyjs='cdn', div_id=f"chart_{hash(title)}")
-
-        return {'image': img_base64, 'html': html}
-
-    def _create_bar_chart(self, x: List[str], y: List[float], title: str) -> Dict[str, str]:
-        """Create a bar chart using Plotly"""
-        fig = go.Figure(data=[go.Bar(x=x, y=y)])
-
-        fig.update_layout(
-            title=title,
-            xaxis_title="Features",
-            yaxis_title="Count",
-            font=dict(size=12),
-            width=600,
-            height=400
-        )
-
-        img_bytes = fig.to_image(format="png", width=600, height=400)
-        img_base64 = base64.b64encode(img_bytes).decode('utf-8')
-        html = fig.to_html(include_plotlyjs='cdn', div_id=f"chart_{hash(title)}")
-
-        return {'image': img_base64, 'html': html}
-
-    def _create_correlation_heatmap(self, correlation_matrix: pd.DataFrame, title: str) -> Dict[str, str]:
-        """Create a correlation heatmap using Plotly"""
-        fig = go.Figure(data=go.Heatmap(
-            z=correlation_matrix.values,
-            x=correlation_matrix.columns,
-            y=correlation_matrix.index,
-            colorscale='RdBu',
-            zmid=0
-        ))
-
-        fig.update_layout(
-            title=title,
-            font=dict(size=12),
-            width=600,
-            height=600
-        )
-
-        img_bytes = fig.to_image(format="png", width=600, height=600)
-        img_base64 = base64.b64encode(img_bytes).decode('utf-8')
-        html = fig.to_html(include_plotlyjs='cdn', div_id=f"chart_{hash(title)}")
-
-        return {'image': img_base64, 'html': html}
-
-    def _generate_data_insights(self, report: Report, df: pd.DataFrame, model_entry: ModelEntry):
-        """Generate data insights for the report"""
-        # Data shape insight
+        # Model input data overview
         DataInsight.objects.create(
             report=report,
             insight_type='data_distribution',
-            title="Dataset Overview",
-            description=f"Dataset contains {df.shape[0]} rows and {df.shape[1]} columns",
+            title="Model Input Data Overview",
+            description=f"The model was trained on {df.shape[0]} samples with {df.shape[1]} features after preprocessing",
             insight_data={
-                'rows': int(df.shape[0]),
-                'columns': int(df.shape[1]),
-                'memory_usage': int(df.memory_usage(deep=True).sum())
+                'training_samples': int(df.shape[0]),
+                'feature_count': int(df.shape[1]),
+                'memory_usage_mb': round(float(df.memory_usage(deep=True).sum() / 1024 / 1024), 2),
+                'task_type': model_entry.task,
+                'target_variable': model_entry.target_variable
             },
-            priority=1
+            priority=2
         )
 
-        # Missing values insight
+        # Data quality insights for processed data
         missing_data = df.isnull().sum()
         total_missing = missing_data.sum()
+
         if total_missing > 0:
             DataInsight.objects.create(
                 report=report,
                 insight_type='missing_values',
-                title="Missing Values Analysis",
-                description=f"Found {total_missing} missing values across {(missing_data > 0).sum()} columns",
+                title="Data Quality After Preprocessing",
+                description=f"After preprocessing, {total_missing} missing values remain across {(missing_data > 0).sum()} features",
                 insight_data={
                     'total_missing': int(total_missing),
-                    'columns_with_missing': int((missing_data > 0).sum()),
-                    'missing_percentage': round(float((total_missing / (df.shape[0] * df.shape[1])) * 100), 2)
+                    'features_with_missing': int((missing_data > 0).sum()),
+                    'missing_percentage': round(float((total_missing / (df.shape[0] * df.shape[1])) * 100), 2),
+                    'features_affected': missing_data[missing_data > 0].to_dict()
                 },
-                priority=2
+                priority=3
+            )
+        else:
+            DataInsight.objects.create(
+                report=report,
+                insight_type='missing_values',
+                title="Data Quality After Preprocessing",
+                description="Excellent data quality: No missing values found in the processed dataset",
+                insight_data={
+                    'total_missing': 0,
+                    'features_with_missing': 0,
+                    'missing_percentage': 0.0,
+                    'quality_status': 'excellent'
+                },
+                priority=3
             )
 
-        # Data types insight
-        dtype_counts = df.dtypes.value_counts().to_dict()
+        # Feature analysis
+        numeric_cols = df.select_dtypes(include=[np.number]).columns
+        categorical_cols = df.select_dtypes(include=['object']).columns
+
+        feature_analysis = {
+            'numeric_features': len(numeric_cols),
+            'categorical_features': len(categorical_cols),
+            'total_features': df.shape[1]
+        }
+
+        # Add target variable analysis if applicable
+        if model_entry.target_variable and model_entry.target_variable in df.columns:
+            target_col = df[model_entry.target_variable]
+            if model_entry.task == 'Classification':
+                unique_classes = target_col.nunique()
+                class_distribution = target_col.value_counts().to_dict()
+                feature_analysis.update({
+                    'target_classes': int(unique_classes),
+                    'class_distribution': {str(k): int(v) for k, v in class_distribution.items()},
+                    'is_balanced': bool(target_col.value_counts().std() / target_col.value_counts().mean() < 0.5)
+                })
+            elif model_entry.task == 'Regression':
+                feature_analysis.update({
+                    'target_mean': round(float(target_col.mean()), 2),
+                    'target_std': round(float(target_col.std()), 2),
+                    'target_range': [round(float(target_col.min()), 2), round(float(target_col.max()), 2)]
+                })
+
         DataInsight.objects.create(
             report=report,
-            insight_type='data_distribution',
-            title="Data Types Distribution",
-            description=f"Dataset contains {len(dtype_counts)} different data types",
-            insight_data={
-                'data_types': {str(k): int(v) for k, v in dtype_counts.items()},
-                'numeric_columns': int(len(df.select_dtypes(include=[np.number]).columns)),
-                'categorical_columns': int(len(df.select_dtypes(include=['object']).columns))
-            },
-            priority=3
+            insight_type='feature_importance',
+            title="Feature Analysis",
+            description=f"Model uses {feature_analysis['numeric_features']} numeric and {feature_analysis['categorical_features']} categorical features",
+            insight_data=feature_analysis,
+            priority=4
         )
 
-    def _generate_ai_insights(self, report: Report, df: pd.DataFrame, model_entry: ModelEntry) -> str:
-        """Generate AI-powered insights using Gemini"""
+        # Model performance insight
+        DataInsight.objects.create(
+            report=report,
+            insight_type='performance_metrics',
+            title="Model Performance",
+            description=f"Model achieved {model_entry.evaluation_metric}: {model_entry.evaluation_metric_value:.4f}",
+            insight_data={
+                'metric_name': model_entry.evaluation_metric,
+                'metric_value': round(float(model_entry.evaluation_metric_value), 4),
+                'model_name': model_entry.model_name,
+                'task_type': model_entry.task,
+                'performance_interpretation': self._interpret_performance(model_entry)
+            },
+            priority=5
+        )
+
+    def _interpret_performance(self, model_entry: ModelEntry) -> str:
+        """Interpret model performance based on task and metric value"""
+        metric_value = model_entry.evaluation_metric_value
+        task = model_entry.task
+        metric = model_entry.evaluation_metric
+
+        if task == 'Classification':
+            if metric in ['accuracy', 'f1_score', 'precision', 'recall']:
+                if metric_value >= 0.9:
+                    return "Excellent performance"
+                elif metric_value >= 0.8:
+                    return "Good performance"
+                elif metric_value >= 0.7:
+                    return "Fair performance"
+                else:
+                    return "Needs improvement"
+        elif task == 'Regression':
+            if metric in ['r2_score']:
+                if metric_value >= 0.9:
+                    return "Excellent fit"
+                elif metric_value >= 0.7:
+                    return "Good fit"
+                elif metric_value >= 0.5:
+                    return "Moderate fit"
+                else:
+                    return "Poor fit"
+            elif metric in ['mean_squared_error', 'mean_absolute_error']:
+                return "Lower values indicate better performance"
+        elif task == 'TimeSeries':
+            return "Lower error values indicate better forecasting accuracy"
+        elif task == 'Clustering':
+            return "Higher silhouette scores indicate better cluster separation"
+
+        return "Performance varies by context"
+
+    def _generate_ai_insights(self, report: Report, df: pd.DataFrame, model_entry: ModelEntry, df_raw: pd.DataFrame = None) -> str:
+        """Generate enhanced AI-powered insights using Gemini with both raw and processed data"""
+        original_metric_value = model_entry.evaluation_metric_value
         try:
-            # Prepare data summary for AI analysis
+            # Correct negative error metrics (like scikit-learn's neg_root_mean_squared_error)
+            # before passing them to the LLM for analysis.
+            metric_name = model_entry.evaluation_metric
+            metric_value = model_entry.evaluation_metric_value
+            error_metrics = ['rmse', 'mse', 'mae', 'mean_squared_error', 'mean_absolute_error', 'root_mean_squared_error']
+
+            if any(em in metric_name.lower() for em in error_metrics) and metric_value < 0:
+                corrected_value = abs(metric_value)
+                logger.info(f"Correcting negative metric '{metric_name}' from {metric_value} to {corrected_value} for LLM insights.")
+                # Temporarily update the value for the scope of this method
+                model_entry.evaluation_metric_value = corrected_value
+            
+            # Prepare comprehensive data summary for AI analysis
             data_summary = {
-                'shape': df.shape,
-                'columns': df.columns.tolist(),
-                'data_types': df.dtypes.to_dict(),
-                'missing_values': df.isnull().sum().to_dict(),
+                'processed_shape': df.shape,
+                'processed_columns': df.columns.tolist(),
+                'processed_data_types': df.dtypes.to_dict(),
+                'processed_missing_values': df.isnull().sum().to_dict(),
                 'task_type': model_entry.task,
                 'target_variable': model_entry.target_variable,
                 'model_performance': {
                     'metric': model_entry.evaluation_metric,
-                    'value': model_entry.evaluation_metric_value
+                    'value': model_entry.evaluation_metric_value,
+                    'model_name': model_entry.model_name
                 }
             }
 
-            # Create prompt for Gemini
+            # Add raw data information if available
+            if df_raw is not None:
+                data_summary.update({
+                    'raw_shape': df_raw.shape,
+                    'raw_missing_values': df_raw.isnull().sum().to_dict(),
+                    'preprocessing_impact': {
+                        'rows_removed': df_raw.shape[0] - df.shape[0],
+                        'columns_removed': df_raw.shape[1] - df.shape[1],
+                        'data_retention_rate': round(df.shape[0] / df_raw.shape[0] * 100, 2)
+                    }
+                })
+
+            # Add target variable analysis
+            if model_entry.target_variable and model_entry.target_variable in df.columns:
+                target_col = df[model_entry.target_variable]
+                if model_entry.task == 'Classification':
+                    data_summary['target_analysis'] = {
+                        'unique_classes': target_col.nunique(),
+                        'class_distribution': target_col.value_counts().to_dict(),
+                        'is_balanced': target_col.value_counts().std() / target_col.value_counts().mean() < 0.5
+                    }
+                elif model_entry.task == 'Regression':
+                    data_summary['target_analysis'] = {
+                        'mean': round(target_col.mean(), 2),
+                        'std': round(target_col.std(), 2),
+                        'range': [round(target_col.min(), 2), round(target_col.max(), 2)]
+                    }
+
+            # Add feature analysis
+            numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+            categorical_cols = df.select_dtypes(include=['object']).columns.tolist()
+
+            # Calculate feature correlations with target if numeric
+            feature_insights = {}
+            if model_entry.target_variable in numeric_cols and len(numeric_cols) > 1:
+                correlations = df[numeric_cols].corr()[model_entry.target_variable].abs().sort_values(ascending=False)
+                top_features = correlations.head(5).to_dict()
+                feature_insights['top_correlated_features'] = {k: round(v, 3) for k, v in top_features.items() if k != model_entry.target_variable}
+
+            # Performance interpretation
+            performance_context = self._get_performance_context(model_entry)
+
+            # Create enhanced prompt for Gemini
             prompt = f"""
-            As a data science expert, analyze the following dataset and model information to provide insights:
+            As a senior data scientist and business analyst, provide a comprehensive analysis of this machine learning model:
 
-            Dataset Information:
-            - Shape: {data_summary['shape']}
-            - Task Type: {data_summary['task_type']}
-            - Target Variable: {data_summary['target_variable']}
-            - Model Performance: {data_summary['model_performance']['metric']} = {data_summary['model_performance']['value']}
+            ## Model Overview
+            - **Task Type**: {data_summary['task_type']}
+            - **Algorithm**: {data_summary['model_performance']['model_name']}
+            - **Target Variable**: {data_summary['target_variable']}
+            - **Performance Metric**: {data_summary['model_performance']['metric']} = {data_summary['model_performance']['value']:.4f}
+            - **Performance Context**: {performance_context}
 
-            Data Types: {data_summary['data_types']}
-            Missing Values: {data_summary['missing_values']}
+            ## Dataset Characteristics
+            - **Final Dataset**: {data_summary['processed_shape'][0]:,} samples × {data_summary['processed_shape'][1]} features
+            - **Feature Composition**: {len(numeric_cols)} numeric features, {len(categorical_cols)} categorical features
+            """
 
-            Please provide:
-            1. Key insights about the data quality
-            2. Observations about the model performance
-            3. Recommendations for improvement
-            4. Potential data issues or concerns
+            if df_raw is not None:
+                prompt += f"""
+            - **Original Dataset**: {data_summary['raw_shape'][0]:,} samples × {data_summary['raw_shape'][1]} features
+            - **Data Retention Rate**: {data_summary['preprocessing_impact']['data_retention_rate']}%
+            - **Preprocessing Impact**: Removed {data_summary['preprocessing_impact']['rows_removed']:,} rows and {data_summary['preprocessing_impact']['columns_removed']} columns
+                """
 
-            Keep the response concise and actionable.
+            if 'target_analysis' in data_summary:
+                if model_entry.task == 'Classification':
+                    prompt += f"""
+            - **Target Classes**: {data_summary['target_analysis']['unique_classes']} unique classes
+            - **Class Balance**: {'Well-balanced' if data_summary['target_analysis']['is_balanced'] else 'Imbalanced - may require attention'}
+                    """
+                elif model_entry.task == 'Regression':
+                    prompt += f"""
+            - **Target Distribution**: Range {data_summary['target_analysis']['range'][0]} to {data_summary['target_analysis']['range'][1]}
+            - **Target Statistics**: Mean = {data_summary['target_analysis']['mean']}, Std = {data_summary['target_analysis']['std']}
+                    """
+
+            if feature_insights.get('top_correlated_features'):
+                top_features_str = ', '.join([f"{k} ({v})" for k, v in list(feature_insights['top_correlated_features'].items())[:3]])
+                prompt += f"""
+            - **Key Predictive Features**: {top_features_str}
+                """
+
+            # Prepare preprocessing context
+            preprocessing_context = ""
+            if df_raw is not None:
+                preprocessing_context = f"Analyze the significant data reduction from {data_summary['raw_shape'][0]} to {data_summary['processed_shape'][0]} samples and its implications."
+            else:
+                preprocessing_context = "Evaluate the current data preprocessing approach."
+
+            # Prepare feature context
+            feature_context = ""
+            if feature_insights.get('top_correlated_features'):
+                top_features = ', '.join(list(feature_insights['top_correlated_features'].keys())[:3])
+                feature_context = f"Highlight the most predictive features: {top_features}."
+            else:
+                feature_context = "Suggest feature engineering approaches based on the available data."
+
+            # Prepare variables for cleaner prompt formatting
+            target_variable = data_summary['target_variable']
+            metric_name = data_summary['model_performance']['metric']
+            metric_value = data_summary['model_performance']['value']
+            task_type = data_summary['task_type']
+            sample_count = data_summary['processed_shape'][0]
+            missing_values_total = sum(data_summary['processed_missing_values'].values())
+            data_completeness = 100 - (missing_values_total / (df.shape[0] * df.shape[1]) * 100)
+
+            prompt += f"""
+
+            ## Data Quality Metrics
+            - **Missing Values**: {missing_values_total} total across all features
+            - **Data Completeness**: {data_completeness:.1f}%
+
+            IMPORTANT: Please provide your response in EXACTLY this format. Use numbered sections with double hash (##) headers. Do NOT use bold (**) formatting for section headers. Follow this exact structure:
+
+            ## 1. Model Performance Analysis
+            Provide a comprehensive evaluation of the model's performance. Explain what the {metric_name} score of {metric_value:.4f} means in practical terms. Compare this to typical benchmarks for {task_type} tasks. Discuss whether this performance level is suitable for production use and what factors might be influencing the results.
+
+            ## 2. Data Quality Assessment
+            Analyze the overall quality and characteristics of the training data. Evaluate the impact of missing values, data distribution, and feature composition on model performance. Identify any data quality issues that could be affecting model accuracy. Discuss the relationship between data size ({sample_count:,} samples) and model complexity.
+
+            ## 3. Preprocessing Impact
+            Examine how data preprocessing has affected the dataset and model training process. {preprocessing_context} Discuss whether the preprocessing steps are appropriate and if additional preprocessing might improve results.
+
+            ## 4. Feature Engineering Opportunities
+            Identify specific opportunities for feature engineering and data enhancement. {feature_context} Recommend techniques for creating new features, handling categorical variables, and improving feature selection.
+
+            ## 5. Actionable Recommendations
+            Provide 4-5 specific, prioritized recommendations for improving model performance:
+            - **Recommendation 1**: [Specific technical improvement]
+            - **Recommendation 2**: [Data quality enhancement]
+            - **Recommendation 3**: [Feature engineering suggestion]
+            - **Recommendation 4**: [Deployment consideration]
+            - **Recommendation 5**: [Monitoring and maintenance]
+
+            ## 6. Business Impact Analysis
+            Translate the technical findings into business value and implications. Explain how the model performance translates to real-world outcomes for the '{target_variable}' prediction task. Discuss confidence levels, potential risks, and recommended use cases. Provide guidance on when to retrain the model and what success metrics to monitor.
+
+            FORMATTING RULES:
+            - Use ## for section headers (not ** or ***)
+            - Each section should be 4-6 sentences
+            - Use bullet points with - for lists
+            - Use **text** for emphasis within paragraphs only
+            - Do NOT add colons after section headers
+            - Start each section immediately after the header
             """
 
             response = self.gemini_model.generate_content(prompt)
@@ -539,6 +948,37 @@ class ReportGenerationService:
         except Exception as e:
             logger.error(f"Error generating AI insights: {e}")
             return "AI insights generation failed. Please check the configuration."
+        finally:
+            # Restore original value to avoid side effects in other parts of the service
+            model_entry.evaluation_metric_value = original_metric_value
+
+    def _get_performance_context(self, model_entry: ModelEntry) -> str:
+        """Provide context for model performance based on task type and metric"""
+        metric = model_entry.evaluation_metric
+        value = model_entry.evaluation_metric_value
+
+        if model_entry.task == 'Classification':
+            if metric in ['accuracy', 'f1_score', 'precision', 'recall']:
+                if value >= 0.9:
+                    return "Excellent performance"
+                elif value >= 0.8:
+                    return "Good performance"
+                elif value >= 0.7:
+                    return "Moderate performance"
+                else:
+                    return "Below average performance"
+        elif model_entry.task == 'Regression':
+            if metric in ['rmse', 'mae']:
+                return "Lower values indicate better performance"
+            elif metric in ['r2', 'r2_score']:
+                if value >= 0.8:
+                    return "Strong predictive power"
+                elif value >= 0.6:
+                    return "Moderate predictive power"
+                else:
+                    return "Weak predictive power"
+
+        return "Performance evaluation needed"
 
     def _generate_chart_explanation(self, chart_type: str, data: dict, title: str, context: str) -> str:
         """Generate AI-powered explanation for specific charts"""
@@ -549,26 +989,35 @@ class ReportGenerationService:
             # Prepare chart data summary for AI
             if chart_type == 'line':
                 y_values = data['y'].dropna()
-                trend_direction = "increasing" if y_values.iloc[-1] > y_values.iloc[0] else "decreasing"
-                volatility = "high" if y_values.std() > y_values.mean() * 0.5 else "moderate" if y_values.std() > y_values.mean() * 0.2 else "low"
+                start_value = y_values.iloc[0]
+                end_value = y_values.iloc[-1]
+                min_value = y_values.min()
+                max_value = y_values.max()
+                mean_value = y_values.mean()
+                std_value = y_values.std()
+
+                # Calculate performance metrics
+                total_change = ((end_value - start_value) / start_value * 100) if start_value != 0 else 0
+                volatility_ratio = std_value / mean_value if mean_value != 0 else 0
 
                 prompt = f"""
-                Analyze this time series chart and provide a clear, concise explanation:
+                Describe this specific time series chart that is currently displayed to the user.
 
-                Chart: {title}
-                Context: {context}
-                Data points: {len(y_values)}
-                Value range: {y_values.min():.1f} to {y_values.max():.1f}
-                Average: {y_values.mean():.1f}
-                Trend: {trend_direction}
-                Volatility: {volatility}
+                CHART DETAILS:
+                - Title: {title}
+                - Shows: {len(y_values):,} data points over time
+                - Overall change: {total_change:+.1f}%
+                - Pattern: {trend_desc}
 
-                Provide a 2-3 sentence explanation that describes:
-                1. What the chart shows
-                2. Key patterns or trends
-                3. Notable observations
+                TASK: Write 2-3 sentences describing what this specific chart shows. Focus on:
+                1. The trend pattern visible in the chart
+                2. What this pattern means for business understanding
+                3. One key insight from the time series
 
-                Keep it clear and actionable for business users.
+                IMPORTANT:
+                - Describe the ACTUAL chart pattern being shown
+                - Don't repeat basic statistics (those are shown separately)
+                - Focus on the trend and business meaning
                 """
 
                 response = self.gemini_model.generate_content(prompt)
@@ -576,15 +1025,34 @@ class ReportGenerationService:
 
             elif chart_type == 'histogram':
                 values = data['values']
+                std_dev = np.std(values)
+                median = np.median(values)
+                q1 = np.percentile(values, 25)
+                q3 = np.percentile(values, 75)
+
+                # Determine distribution characteristics
+                skewness = "right-skewed" if np.mean(values) > median else "left-skewed" if np.mean(values) < median else "symmetric"
+                spread = "high" if std_dev > np.mean(values) * 0.5 else "moderate" if std_dev > np.mean(values) * 0.2 else "low"
+
                 prompt = f"""
-                Explain this distribution chart:
+                Analyze this specific histogram chart that is currently displayed to the user. Describe what you can see in the actual distribution pattern.
 
-                Chart: {title}
-                Data points: {len(values)}
-                Range: {min(values):.1f} to {max(values):.1f}
-                Average: {np.mean(values):.1f}
+                CHART DETAILS:
+                - Title: {title}
+                - Data shows: {len(values):,} observations
+                - Distribution shape: {skewness}
+                - Spread level: {spread} variability
 
-                Describe the distribution shape and what it means for the business.
+                TASK: Write 2-3 sentences that describe what this specific histogram reveals about the data pattern. Focus on:
+                1. The actual shape and pattern visible in the chart
+                2. What this pattern means for business understanding
+                3. One key insight from the distribution
+
+                IMPORTANT:
+                - Describe the ACTUAL chart being shown
+                - Don't repeat basic statistics (those are shown separately)
+                - Focus on the distribution pattern and business meaning
+                - Be specific about what the chart reveals
                 """
 
                 response = self.gemini_model.generate_content(prompt)
@@ -601,16 +1069,91 @@ class ReportGenerationService:
         """Provide default explanations when AI is not available"""
         if chart_type == 'line':
             y_values = data['y'].dropna()
-            return f"This time series chart shows {title.lower()} over time. The data ranges from {y_values.min():.1f} to {y_values.max():.1f} with an average of {y_values.mean():.1f}. {context}"
+
+            # Calculate trend characteristics
+            start_value = y_values.iloc[0]
+            end_value = y_values.iloc[-1]
+            min_value = y_values.min()
+            max_value = y_values.max()
+            mean_value = y_values.mean()
+
+            # Determine overall trend
+            if end_value > start_value * 1.1:
+                trend_desc = "strong upward trend"
+                trend_implication = "indicating growth and positive momentum"
+            elif end_value < start_value * 0.9:
+                trend_desc = "downward trend"
+                trend_implication = "suggesting a decline that may need attention"
+            else:
+                trend_desc = "relatively stable pattern"
+                trend_implication = "showing consistent performance over time"
+
+            # Calculate volatility
+            volatility = y_values.std() / mean_value if mean_value != 0 else 0
+            if volatility > 0.3:
+                volatility_desc = "high volatility with significant fluctuations"
+            elif volatility > 0.1:
+                volatility_desc = "moderate volatility with some fluctuations"
+            else:
+                volatility_desc = "low volatility with stable values"
+
+            # Performance change
+            total_change = ((end_value - start_value) / start_value * 100) if start_value != 0 else 0
+
+            # Focus on the trend pattern, not basic stats
+            if abs(total_change) > 20:
+                change_insight = f"The significant {abs(total_change):.0f}% change suggests a major shift in performance that warrants investigation."
+            elif abs(total_change) > 5:
+                change_insight = f"The moderate {abs(total_change):.0f}% change indicates gradual evolution in the underlying factors."
+            else:
+                change_insight = f"The stable pattern with minimal change suggests consistent performance over time."
+
+            return f"This time series chart reveals a {trend_desc} pattern in {title.lower()} {trend_implication}. {change_insight} The {volatility_desc} provides insights into the consistency and predictability of the underlying process."
         elif chart_type == 'histogram':
             values = data['values']
-            return f"This histogram shows the distribution of {title.lower()}. Values range from {min(values):.1f} to {max(values):.1f} with an average of {np.mean(values):.1f}."
+            std_dev = np.std(values)
+            median = np.median(values)
+            mean = np.mean(values)
+            q1 = np.percentile(values, 25)
+            q3 = np.percentile(values, 75)
+
+            # Determine distribution characteristics
+            if mean > median * 1.1:
+                shape_desc = "right-skewed, indicating most values are concentrated at the lower end with some high outliers"
+                business_implication = "This suggests there are opportunities to understand what drives the higher values"
+            elif mean < median * 0.9:
+                shape_desc = "left-skewed, indicating most values are concentrated at the higher end with some low outliers"
+                business_implication = "This suggests investigating factors that might be causing the lower performance cases"
+            else:
+                shape_desc = "approximately symmetric, indicating a balanced distribution around the center"
+                business_implication = "This suggests a stable, predictable pattern in the data"
+
+            if std_dev > mean * 0.5:
+                spread_desc = "high variability, indicating significant differences between data points"
+            elif std_dev > mean * 0.2:
+                spread_desc = "moderate variability, showing some differences but generally consistent patterns"
+            else:
+                spread_desc = "low variability, indicating very consistent values across the dataset"
+
+            # Calculate concentration
+            iqr = q3 - q1
+            concentration = f"50% of values fall between {q1:,.1f} and {q3:,.1f}"
+
+            # Focus on the distribution pattern, not the basic stats
+            if mean > median * 1.1:
+                pattern_insight = f"The distribution shows most values cluster toward the lower end, with a few high-value cases pulling the average up. This suggests opportunities to understand what drives the top performers."
+            elif mean < median * 0.9:
+                pattern_insight = f"The distribution shows most values cluster toward the higher end, with some lower-performing cases. This suggests investigating factors that might be limiting performance in certain cases."
+            else:
+                pattern_insight = f"The distribution shows a balanced pattern around the center, indicating consistent and predictable behavior across the dataset."
+
+            return f"This histogram reveals the distribution pattern of {title.lower()}, showing a {shape_desc}. {pattern_insight} The {spread_desc} indicates {'significant variation' if std_dev > mean * 0.3 else 'moderate consistency'} in the underlying data."
         elif chart_type == 'bar':
-            return f"This bar chart displays {title.lower()}. {context}"
+            return f"This bar chart displays {title.lower()} across different categories. {context} The chart helps compare values between different groups and identify the highest and lowest performing categories."
         elif chart_type == 'pie':
-            return f"This pie chart shows the proportional breakdown of {title.lower()}."
+            return f"This pie chart shows the proportional breakdown of {title.lower()}. Each slice represents the relative contribution of different categories to the total, making it easy to identify the largest and smallest segments."
         else:
-            return f"This {chart_type} chart visualizes {title.lower()}. {context}"
+            return f"This {chart_type} chart visualizes {title.lower()}. {context} The visualization helps understand patterns and relationships in the data."
 
 
 class ChartExportService:
