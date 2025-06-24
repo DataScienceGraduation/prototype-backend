@@ -12,6 +12,7 @@ import google.generativeai as genai
 from celery import shared_task
 from google.generativeai.types import GenerationConfig
 import matplotlib.pyplot as plt
+import re  # Add this at the top if not present
 
 # Try to import kaleido and configure it
 try:
@@ -452,6 +453,7 @@ class ReportGenerationService:
             3. **Sophistication**: Use advanced visualization techniques when appropriate (subplots, annotations, custom styling)
             4. **Uniqueness**: Avoid generic charts - create visualizations that are specifically tailored to this dataset
             5. **Storytelling**: Each chart should tell a compelling story about the data
+            6. **Findings-Focused Explanation**: For each chart, your explanation MUST describe the actual findings, trends, and patterns visible in the chart/data. Do NOT describe what this chart type generally shows. List at least 2-3 specific findings or trends visible in the chart.
 
             **Chart Types to Consider** (but not limited to):
             - Distribution plots (histograms, box plots, violin plots, density plots)
@@ -466,7 +468,7 @@ class ReportGenerationService:
             2. **Business Question**: What business question does this chart answer?
             3. **Data Justification**: Why is this chart type most suitable for this specific data?
             4. **Sophisticated Python Code**: Complete, production-ready code using plotly.graph_objects
-            5. **Detailed Analysis**: Comprehensive explanation of what the chart reveals and its business implications
+            5. **Detailed Analysis**: Write a comprehensive 4-6 sentence analysis explaining what THIS chart specifically reveals, including key patterns, outliers, trends, and business insights. Focus ONLY on what is actually found in the data and chart, not what this chart type is generally used for. List at least 2-3 specific findings or trends visible in the chart.
 
             **Code Requirements**:
             - Use plotly.graph_objects (imported as `go`)
@@ -493,6 +495,22 @@ class ReportGenerationService:
             **IMPORTANT**: Focus on creating unique, sophisticated visualizations that are specifically tailored to this dataset's characteristics. Don't create generic charts - make each one tell a compelling story about the data.
             """
 
+            # Add special instructions for time series problems
+            is_time_series = model_entry.task == 'TimeSeries'
+            if is_time_series:
+                prompt += """
+                SPECIAL INSTRUCTIONS FOR TIME SERIES:
+                - Use line plots (go.Scatter with mode='lines') for time series data.
+                - Consider adding seasonal decomposition or autocorrelation plots if the data is long enough.
+                - Do NOT use scatter plots with 'trendline' property.
+                - The x-axis should be the datetime or sequential index.
+                - Focus on trends, seasonality, and forecast visualization.
+                - Do NOT use unsupported properties in plotly.graph_objs.
+                - If you want to show a trendline, add a separate line trace for the trend.
+                - Do NOT use go.Scatter for time series unless mode='lines' or mode='lines+markers'.
+                - Do NOT use seaborn or matplotlib, only plotly.graph_objects as go.
+                """
+
             # Call the LLM with JSON response type
             generation_config = GenerationConfig(response_mime_type="application/json")
             response = self.gemini_model.generate_content(prompt, generation_config=generation_config)
@@ -502,6 +520,9 @@ class ReportGenerationService:
             
             chart_suggestions = json.loads(response.text)
             logger.info(f"Successfully parsed {len(chart_suggestions)} chart suggestions from LLM")
+
+            # Track if any chart was successfully generated
+            chart_success = False
 
             # Process each sophisticated chart suggestion
             for suggestion in chart_suggestions:
@@ -516,9 +537,42 @@ class ReportGenerationService:
                     continue
 
                 try:
-                    # Execute the sophisticated generated code
-                    local_scope = {'df': df, 'go': go, 'pd': pd, 'np': np, 'plt': plt if 'plt' in globals() else None}
-                    exec(python_code, globals(), local_scope)
+                    # Remove unsupported 'trendline' property if present
+                    if "trendline" in python_code:
+                        python_code = python_code.replace("trendline=", "# trendline=")
+                        logger.warning("Removed unsupported 'trendline' property from LLM code.")
+
+                    # Remove redundant imports and fig.show() lines using regex (improved)
+                    python_code = re.sub(
+                        r'^\s*(import\s+plotly\\.graph_objects\s+as\s+go|from\s+plotly\\.subplots\s+import\s+make_subplots|import\s+pandas\s+as\s+pd|import\s+numpy\s+as\s+np)\s*$',
+                        '',
+                        python_code,
+                        flags=re.MULTILINE
+                    )
+                    python_code = re.sub(r'^\s*fig\.show\(\)\s*$', '', python_code, flags=re.MULTILINE)
+
+                    # Fix LLM code that passes df.columns directly to make_subplots (must be a list)
+                    python_code = python_code.replace('column_titles=df.columns', 'column_titles=list(df.columns)')
+                    python_code = python_code.replace('row_titles=df.columns', 'row_titles=list(df.columns)')
+
+                    # Log the cleaned code for debugging
+                    logger.debug(f"Cleaned LLM-generated code for chart '{chart_type}':\n{python_code}")
+
+                    # Ensure all required objects are available in the local scope for exec
+                    from plotly.subplots import make_subplots
+                    try:
+                        import plotly.graph_objects as go
+                    except NameError:
+                        import plotly.graph_objects as go
+                    local_scope = {'df': df, 'go': go, 'pd': pd, 'np': np, 'make_subplots': make_subplots}
+
+                    # Use the same dict for globals and locals to avoid scoping issues
+                    import traceback
+                    try:
+                        exec(python_code, local_scope, local_scope)
+                    except Exception as e:
+                        logger.error(f"Error executing LLM code: {e}\n{traceback.format_exc()}\nCode:\n{python_code}")
+                        raise
                     fig = local_scope.get('fig')
 
                     if not isinstance(fig, go.Figure):
@@ -529,9 +583,44 @@ class ReportGenerationService:
                     img_base64 = safe_plotly_to_image(fig, format="png", width=1000, height=600)
                     html = fig.to_html(include_plotlyjs='cdn', div_id=f"chart_{hash(chart_type + business_question)}")
 
+                    # Try to extract chart data for explanation
+                    chart_data = {}
+                    try:
+                        # For common chart types, extract data from the figure
+                        if chart_type == 'line':
+                            chart_data = {
+                                'x': fig.data[0].x if fig.data else [],
+                                'y': fig.data[0].y if fig.data else []
+                            }
+                        elif chart_type == 'bar':
+                            chart_data = {
+                                'x': fig.data[0].x if fig.data else [],
+                                'y': fig.data[0].y if fig.data else []
+                            }
+                        elif chart_type == 'histogram':
+                            chart_data = {
+                                'values': fig.data[0].x if fig.data else []
+                            }
+                        elif chart_type == 'pie':
+                            chart_data = {
+                                'labels': fig.data[0].labels if fig.data else [],
+                                'values': fig.data[0].values if fig.data else []
+                            }
+                        # Add more chart types as needed
+                    except Exception as e:
+                        logger.warning(f"Could not extract chart data for explanation: {e}")
+                        chart_data = {}
+
+                    # Generate a data-driven explanation using _generate_chart_explanation
+                    try:
+                        chart_explanation = self._generate_chart_explanation(chart_type, chart_data, chart_type.replace('_', ' ').title(), business_question)
+                        chart_description = f"{chart_explanation}\n\n**Data Justification**: {data_justification}"
+                    except Exception as e:
+                        logger.warning(f"Falling back to LLM detailed_analysis for chart description: {e}")
+                        chart_description = f"{detailed_analysis}\n\n**Data Justification**: {data_justification}"
+
                     # Create comprehensive title and description
                     chart_title = f"{chart_type.replace('_', ' ').title()}: {business_question}"
-                    chart_description = f"{detailed_analysis}\n\n**Data Justification**: {data_justification}"
 
                     # Save the sophisticated LLM-generated chart
                     self._save_llm_chart(
@@ -541,11 +630,11 @@ class ReportGenerationService:
                         description=chart_description,
                         llm_reasoning=data_justification,
                         chart_code=python_code,
-                        chart_data={},  # Data is embedded in the visualization
+                        chart_data=chart_data,  # Save extracted chart data
                         chart_image_base64=img_base64,
                         chart_html=html
                     )
-                    
+                    chart_success = True
                     logger.info(f"Successfully generated sophisticated chart: {chart_type} - {business_question}")
                     
                 except Exception as e:
@@ -562,6 +651,42 @@ class ReportGenerationService:
                         chart_image_base64='',
                         chart_html=f'<div>Error: {str(e)}</div>'
                     )
+
+            # Fallback: If no chart was successfully generated for time series, create a default line plot
+            if is_time_series and not chart_success:
+                try:
+                    logger.warning("No valid LLM chart generated for time series. Falling back to default line plot.")
+                    # Try to find a datetime column
+                    datetime_col = None
+                    for col in df.columns:
+                        if df[col].dtype == 'object':
+                            try:
+                                pd.to_datetime(df[col], errors='raise')
+                                datetime_col = col
+                                break
+                            except:
+                                continue
+                    target_col = model_entry.target_variable
+                    if datetime_col and target_col in df.columns:
+                        df_sorted = df.sort_values(datetime_col)
+                        import plotly.graph_objects as go
+                        fig = go.Figure(data=[go.Scatter(x=df_sorted[datetime_col], y=df_sorted[target_col], mode='lines', name=target_col)])
+                        fig.update_layout(title=f"Time Series Line Plot: {target_col}", xaxis_title=datetime_col, yaxis_title=target_col)
+                        img_base64 = safe_plotly_to_image(fig, format="png", width=1000, height=600)
+                        html = fig.to_html(include_plotlyjs='cdn', div_id=f"chart_default_timeseries_{hash(target_col)}")
+                        self._save_llm_chart(
+                            report=report,
+                            chart_type='line',
+                            title=f"Default Time Series Line Plot: {target_col}",
+                            description=f"This is a default time series line plot of the target variable '{target_col}' over time (column '{datetime_col}'). The LLM failed to generate a valid chart, so this fallback plot is provided.",
+                            llm_reasoning="Fallback: LLM failed to generate a valid time series chart.",
+                            chart_code="Default fallback line plot code.",
+                            chart_data={},
+                            chart_image_base64=img_base64,
+                            chart_html=html
+                        )
+                except Exception as e:
+                    logger.error(f"Failed to generate fallback time series line plot: {e}")
 
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse LLM JSON response: {e}\nLLM Response Text: {response.text}")
