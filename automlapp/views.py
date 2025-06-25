@@ -275,6 +275,24 @@ def getAllModels(request):
 def getModel(request):
     try:
         entries = ModelEntry.objects.get(id=request.GET['id'])
+        
+        # Get dataset information
+        dataset_info = {}
+        try:
+            import pandas as pd
+            df = pd.read_csv(f'data/{entries.id}.csv')
+            dataset_info = {
+                'rows': len(df),
+                'columns': len(df.columns),
+                'column_names': list(df.columns),
+                'missing_values': df.isnull().sum().to_dict(),
+                'data_types': df.dtypes.astype(str).to_dict(),
+                'sample_data': df.head(5).to_dict('records')
+            }
+        except Exception as e:
+            print(f"Error reading dataset: {e}")
+            dataset_info = {'error': 'Could not load dataset information'}
+        
         data = {
             'id': entries.id,
             'name': entries.name,
@@ -285,7 +303,8 @@ def getModel(request):
             'status': entries.status,
             'model_name': entries.model_name,
             'evaluation_metric': entries.evaluation_metric,
-            'evaluation_metric_value': entries.evaluation_metric_value
+            'evaluation_metric_value': entries.evaluation_metric_value,
+            'dataset': dataset_info
         }
         response = JsonResponse({'success': True, 'data': data }, status=200)
         response["Access-Control-Allow-Origin"] = "http://localhost:3000"
