@@ -42,8 +42,8 @@ from .models import Report, ChartData, DataInsight
 
 logger = logging.getLogger(__name__)
 
-def safe_plotly_to_image(fig, format="png", width=600, height=400):
-    """Safely convert plotly figure to image with fallback to matplotlib"""
+def safe_plotly_to_image(fig, format="jpeg", width=800, height=500):
+    """Safely convert plotly figure to image with fallback to matplotlib, using JPEG and smaller size for reduced file size"""
     try:
         if KALEIDO_AVAILABLE:
             img_bytes = fig.to_image(format=format, width=width, height=height, engine="kaleido")
@@ -225,7 +225,7 @@ class ReportGenerationService:
             api_key = os.getenv('LLM_API_KEY')
             if api_key:
                 genai.configure(api_key=api_key)
-                self.gemini_model = genai.GenerativeModel('gemini-1.5-pro')
+                self.gemini_model = genai.GenerativeModel('gemini-2.5-pro')
             else:
                 logger.warning("LLM_API_KEY not found in environment variables. AI insights will be disabled.")
                 self.gemini_model = None
@@ -454,6 +454,7 @@ class ReportGenerationService:
             4. **Uniqueness**: Avoid generic charts - create visualizations that are specifically tailored to this dataset
             5. **Storytelling**: Each chart should tell a compelling story about the data
             6. **Findings-Focused Explanation**: For each chart, your explanation MUST describe the actual findings, trends, and patterns visible in the chart/data. Do NOT describe what this chart type generally shows. List at least 2-3 specific findings or trends visible in the chart.
+            7. **STRICT**: For the 'detailed_analysis' field, you MUST NOT repeat the business question or chart type. Instead, provide 3-4 specific findings, trends, or patterns that are visible in the chart/data. If there are strong correlations, outliers, clusters, or other notable features, mention them explicitly. If there are no strong patterns, state that clearly. Your answer should be actionable and data-driven.
 
             **Chart Types to Consider** (but not limited to):
             - Distribution plots (histograms, box plots, violin plots, density plots)
@@ -487,7 +488,7 @@ class ReportGenerationService:
                     "business_question": "What specific business question does this answer?",
                     "data_justification": "Why this chart type is perfect for this data",
                     "python_code": "Complete plotly code that creates a variable named 'fig'",
-                    "detailed_analysis": "Comprehensive 4-6 sentence analysis explaining what the chart reveals, key patterns, outliers, trends, and specific business insights. Focus on actionable insights and what stakeholders should learn from this visualization."
+                    "detailed_analysis": "Comprehensive 4-6 sentence analysis explaining what the chart reveals, key patterns, outliers, trends, and specific business insights. Focus on actionable insights and what stakeholders should learn from this visualization. Do NOT repeat the business question or chart type."
                 }}
             ]
             ```
@@ -536,120 +537,148 @@ class ReportGenerationService:
                     logger.warning(f"Skipping incomplete chart suggestion: {suggestion}")
                     continue
 
-                try:
-                    # Remove unsupported 'trendline' property if present
-                    if "trendline" in python_code:
-                        python_code = python_code.replace("trendline=", "# trendline=")
-                        logger.warning("Removed unsupported 'trendline' property from LLM code.")
-
-                    # Remove redundant imports and fig.show() lines using regex (improved)
-                    python_code = re.sub(
-                        r'^\s*(import\s+plotly\\.graph_objects\s+as\s+go|from\s+plotly\\.subplots\s+import\s+make_subplots|import\s+pandas\s+as\s+pd|import\s+numpy\s+as\s+np)\s*$',
-                        '',
-                        python_code,
-                        flags=re.MULTILINE
-                    )
-                    python_code = re.sub(r'^\s*fig\.show\(\)\s*$', '', python_code, flags=re.MULTILINE)
-
-                    # Fix LLM code that passes df.columns directly to make_subplots (must be a list)
-                    python_code = python_code.replace('column_titles=df.columns', 'column_titles=list(df.columns)')
-                    python_code = python_code.replace('row_titles=df.columns', 'row_titles=list(df.columns)')
-
-                    # Log the cleaned code for debugging
-                    logger.debug(f"Cleaned LLM-generated code for chart '{chart_type}':\n{python_code}")
-
-                    # Ensure all required objects are available in the local scope for exec
-                    from plotly.subplots import make_subplots
+                max_attempts = 2
+                attempt = 0
+                success = False
+                last_error = None
+                current_python_code = python_code
+                current_detailed_analysis = detailed_analysis
+                while attempt < max_attempts and not success:
                     try:
-                        import plotly.graph_objects as go
-                    except NameError:
-                        import plotly.graph_objects as go
-                    local_scope = {'df': df, 'go': go, 'pd': pd, 'np': np, 'make_subplots': make_subplots}
+                        # Remove unsupported 'trendline' property if present
+                        if "trendline" in current_python_code:
+                            current_python_code = current_python_code.replace("trendline=", "# trendline=")
+                            logger.warning("Removed unsupported 'trendline' property from LLM code.")
 
-                    # Use the same dict for globals and locals to avoid scoping issues
-                    import traceback
-                    try:
-                        exec(python_code, local_scope, local_scope)
-                    except Exception as e:
-                        logger.error(f"Error executing LLM code: {e}\n{traceback.format_exc()}\nCode:\n{python_code}")
-                        raise
-                    fig = local_scope.get('fig')
+                        # Remove redundant imports and fig.show() lines using regex (improved)
+                        current_python_code = re.sub(
+                            r'^\s*(import\s+plotly\\.graph_objects\s+as\s+go|from\s+plotly\\.subplots\s+import\s+make_subplots|import\s+pandas\s+as\s+pd|import\s+numpy\s+as\s+np)\s*$',
+                            '',
+                            current_python_code,
+                            flags=re.MULTILINE
+                        )
+                        current_python_code = re.sub(r'^\s*fig\.show\(\)\s*$', '', current_python_code, flags=re.MULTILINE)
+                        current_python_code = current_python_code.replace('column_titles=df.columns', 'column_titles=list(df.columns)')
+                        current_python_code = current_python_code.replace('row_titles=df.columns', 'row_titles=list(df.columns)')
 
-                    if not isinstance(fig, go.Figure):
-                        logger.error(f"Generated code for chart '{chart_type}' did not produce a plotly Figure object.")
-                        continue
+                        logger.debug(f"Cleaned LLM-generated code for chart '{chart_type}' (attempt {attempt+1}):\n{current_python_code}")
 
-                    # Generate high-quality image and HTML from the figure
-                    img_base64 = safe_plotly_to_image(fig, format="png", width=1000, height=600)
-                    html = fig.to_html(include_plotlyjs='cdn', div_id=f"chart_{hash(chart_type + business_question)}")
+                        from plotly.subplots import make_subplots
+                        try:
+                            import plotly.graph_objects as go
+                        except NameError:
+                            import plotly.graph_objects as go
+                        local_scope = {'df': df, 'go': go, 'pd': pd, 'np': np, 'make_subplots': make_subplots}
+                        import traceback
+                        try:
+                            exec(current_python_code, local_scope, local_scope)
+                        except Exception as e:
+                            logger.error(f"Error executing LLM code (attempt {attempt+1}): {e}\n{traceback.format_exc()}\nCode:\n{current_python_code}")
+                            raise
+                        fig = local_scope.get('fig')
+                        if not isinstance(fig, go.Figure):
+                            logger.error(f"Generated code for chart '{chart_type}' did not produce a plotly Figure object.")
+                            raise ValueError("Generated code did not produce a plotly Figure object.")
 
-                    # Try to extract chart data for explanation
-                    chart_data = {}
-                    try:
-                        # For common chart types, extract data from the figure
-                        if chart_type == 'line':
-                            chart_data = {
-                                'x': fig.data[0].x if fig.data else [],
-                                'y': fig.data[0].y if fig.data else []
-                            }
-                        elif chart_type == 'bar':
-                            chart_data = {
-                                'x': fig.data[0].x if fig.data else [],
-                                'y': fig.data[0].y if fig.data else []
-                            }
-                        elif chart_type == 'histogram':
-                            chart_data = {
-                                'values': fig.data[0].x if fig.data else []
-                            }
-                        elif chart_type == 'pie':
-                            chart_data = {
-                                'labels': fig.data[0].labels if fig.data else [],
-                                'values': fig.data[0].values if fig.data else []
-                            }
-                        # Add more chart types as needed
-                    except Exception as e:
-                        logger.warning(f"Could not extract chart data for explanation: {e}")
+                        # Generate high-quality image and HTML from the figure
+                        img_base64 = safe_plotly_to_image(fig, format="png", width=1000, height=600)
+                        html = fig.to_html(include_plotlyjs='cdn', div_id=f"chart_{hash(chart_type + business_question)}")
+
+                        # Try to extract chart data for explanation
                         chart_data = {}
+                        try:
+                            if chart_type == 'line':
+                                chart_data = {
+                                    'x': fig.data[0].x if fig.data else [],
+                                    'y': fig.data[0].y if fig.data else []
+                                }
+                            elif chart_type == 'bar':
+                                chart_data = {
+                                    'x': fig.data[0].x if fig.data else [],
+                                    'y': fig.data[0].y if fig.data else []
+                                }
+                            elif chart_type == 'histogram':
+                                chart_data = {
+                                    'values': fig.data[0].x if fig.data else []
+                                }
+                            elif chart_type == 'pie':
+                                chart_data = {
+                                    'labels': fig.data[0].labels if fig.data else [],
+                                    'values': fig.data[0].values if fig.data else []
+                                }
+                        except Exception as e:
+                            logger.warning(f"Could not extract chart data for explanation: {e}")
+                            chart_data = {}
 
-                    # Generate a data-driven explanation using _generate_chart_explanation
-                    try:
-                        chart_explanation = self._generate_chart_explanation(chart_type, chart_data, chart_type.replace('_', ' ').title(), business_question)
-                        chart_description = f"{chart_explanation}\n\n**Data Justification**: {data_justification}"
+                        use_llm_analysis = False
+                        if current_detailed_analysis and len(current_detailed_analysis.strip()) > 0:
+                            lower_analysis = current_detailed_analysis.lower()
+                            question_in_analysis = business_question.lower()[:30] in lower_analysis
+                            chart_type_in_analysis = chart_type.replace('_', ' ').lower() in lower_analysis
+                            if not question_in_analysis and not chart_type_in_analysis:
+                                chart_description = f"{current_detailed_analysis}\n\n**Data Justification**: {data_justification}"
+                                use_llm_analysis = True
+                        if not use_llm_analysis:
+                            try:
+                                chart_explanation = self._generate_chart_explanation(chart_type, chart_data, chart_type.replace('_', ' ').title(), business_question)
+                                chart_description = f"{chart_explanation}\n\n**Data Justification**: {data_justification}"
+                            except Exception as e:
+                                logger.warning(f"Falling back to generic chart description: {e}")
+                                chart_description = f"This {chart_type} chart visualizes {chart_type.replace('_', ' ').title()}. {business_question}"
+
+                        chart_title = f"{chart_type.replace('_', ' ').title()}: {business_question}"
+                        self._save_llm_chart(
+                            report=report,
+                            chart_type=chart_type,
+                            title=chart_title,
+                            description=chart_description,
+                            llm_reasoning=data_justification,
+                            chart_code=current_python_code,
+                            chart_data=chart_data,
+                            chart_image_base64=img_base64,
+                            chart_html=html
+                        )
+                        chart_success = True
+                        logger.info(f"Successfully generated sophisticated chart: {chart_type} - {business_question}")
+                        success = True
                     except Exception as e:
-                        logger.warning(f"Falling back to LLM detailed_analysis for chart description: {e}")
-                        chart_description = f"{detailed_analysis}\n\n**Data Justification**: {data_justification}"
-
-                    # Create comprehensive title and description
-                    chart_title = f"{chart_type.replace('_', ' ').title()}: {business_question}"
-
-                    # Save the sophisticated LLM-generated chart
-                    self._save_llm_chart(
-                        report=report,
-                        chart_type=chart_type,
-                        title=chart_title,
-                        description=chart_description,
-                        llm_reasoning=data_justification,
-                        chart_code=python_code,
-                        chart_data=chart_data,  # Save extracted chart data
-                        chart_image_base64=img_base64,
-                        chart_html=html
-                    )
-                    chart_success = True
-                    logger.info(f"Successfully generated sophisticated chart: {chart_type} - {business_question}")
-                    
-                except Exception as e:
-                    logger.error(f"Failed to generate sophisticated chart '{chart_type}': {e}")
-                    logger.error(f"Python code that failed:\n{python_code}")
-                    
+                        last_error = str(e)
+                        logger.error(f"Failed to generate sophisticated chart '{chart_type}' (attempt {attempt+1}): {last_error}")
+                        if attempt < max_attempts - 1:
+                            # Regenerate code with LLM, appending the error message to the prompt
+                            retry_prompt = (
+                                f"{prompt}\n\nNOTE: The previous code for this chart failed with this error:\n{last_error}\n"
+                                "Please generate a new, valid Plotly code for this chart, avoiding the previous mistake. "
+                                "Do NOT use any properties or arguments that are not supported by plotly.graph_objects. "
+                                "If you are generating a scatter plot matrix (SPLOM), do NOT use 'type' in the diagonal property."
+                            )
+                            try:
+                                generation_config = GenerationConfig(response_mime_type="application/json")
+                                response = self.gemini_model.generate_content(retry_prompt, generation_config=generation_config)
+                                logger.info(f"LLM retry response received for chart generation. Response length: {len(response.text)}")
+                                logger.info(f"LLM retry response preview: {response.text[:500]}...")
+                                retry_chart_suggestions = json.loads(response.text)
+                                # Use the first suggestion from retry
+                                retry_suggestion = retry_chart_suggestions[0] if isinstance(retry_chart_suggestions, list) and len(retry_chart_suggestions) > 0 else None
+                                if retry_suggestion:
+                                    current_python_code = retry_suggestion.get('python_code', current_python_code)
+                                    current_detailed_analysis = retry_suggestion.get('detailed_analysis', current_detailed_analysis)
+                                else:
+                                    logger.warning("LLM retry did not return a valid suggestion, will fallback to error chart if next attempt fails.")
+                            except Exception as retry_e:
+                                logger.error(f"LLM retry failed: {retry_e}")
+                                # If LLM retry fails, will fallback to error chart on next loop
+                        attempt += 1
+                if not success:
                     # Save error information for debugging
                     validate_and_save_chart_data(
                         report=report,
                         chart_type='error',
                         title=f"Chart Generation Error: {chart_type}",
-                        description=f"Failed to generate sophisticated chart: {str(e)}\n\nBusiness Question: {business_question}\n\nCode:\n{python_code}",
-                        chart_data={'error': str(e), 'code': python_code, 'business_question': business_question},
+                        description=f"Failed to generate sophisticated chart after {max_attempts} attempts: {last_error}\n\nBusiness Question: {business_question}\n\nCode:\n{current_python_code}",
+                        chart_data={'error': last_error, 'code': current_python_code, 'business_question': business_question},
                         chart_image_base64='',
-                        chart_html=f'<div>Error: {str(e)}</div>'
+                        chart_html=f'<div>Error: {last_error}</div>'
                     )
 
             # Fallback: If no chart was successfully generated for time series, create a default line plot
