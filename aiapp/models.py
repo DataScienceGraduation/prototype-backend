@@ -148,3 +148,21 @@ class ReportTemplate(models.Model):
 
     def __str__(self):
         return f"{self.name} ({self.model_task_type})"
+
+
+class Dashboard(models.Model):
+    """
+    Stores dashboard chart suggestions for a single model. One dashboard per ModelEntry.
+    """
+    model_entry = models.OneToOneField('automlapp.ModelEntry', on_delete=models.CASCADE, related_name='dashboard', primary_key=True)
+    title = models.CharField(max_length=255, blank=True, default="")
+    description = models.TextField(blank=True, default="")
+    charts = models.JSONField(default=list, help_text="Chart suggestions for this model")
+    status = models.CharField(max_length=20, default="pending", help_text="Dashboard generation status: pending, generating, completed, failed")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"Dashboard for {self.model_entry.name}"

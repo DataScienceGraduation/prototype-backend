@@ -5,11 +5,14 @@ from django.views.decorators.csrf import csrf_exempt
 from django.core.paginator import Paginator
 from automlapp.views import jwt_authenticated
 from automlapp.models import ModelEntry, User
-from .models import Report, ChartData, DataInsight
+from .models import Report, ChartData, DataInsight, Dashboard
 from .services import ReportGenerationService, ChartExportService, generate_report_async
 from celery.result import AsyncResult
+from .tasks import suggest_charts_task
+from django.core.files.storage import default_storage
 import json
 import logging
+import pandas as pd
 
 logger = logging.getLogger(__name__)
 
@@ -534,3 +537,67 @@ def get_report_by_task(request):
             'success': False,
             'message': 'Error retrieving report'
         }, status=500)
+
+
+@csrf_exempt
+@require_POST
+@jwt_authenticated
+def start_suggest_charts(request):
+    """
+    Start async chart suggestion for a model. POST with JSON: { "model_id": ... }
+    Returns: { "success": true, "task_id": ... }
+    """
+    data = json.loads(request.body)
+    model_id = data.get("model_id")
+    if not model_id:
+        return JsonResponse({"success": False, "message": "model_id required"}, status=400)
+    task = suggest_charts_task.delay(model_id)
+    return JsonResponse({"success": True, "task_id": task.id})
+
+
+@csrf_exempt
+@require_POST
+@jwt_authenticated
+def get_suggest_charts_result(request):
+    """
+    Get result of async chart suggestion. POST with JSON: { "task_id": ... }
+    Returns: { "success": true, "status": ..., "result": ... }
+    """
+    data = json.loads(request.body)
+    task_id = data.get("task_id")
+    if not task_id:
+        return JsonResponse({"success": False, "message": "task_id required"}, status=400)
+    result = AsyncResult(task_id)
+    if result.state == 'PENDING':
+        return JsonResponse({"success": True, "status": "PENDING"})
+    elif result.state == 'SUCCESS':
+        return JsonResponse({"success": True, "status": "SUCCESS", "result": result.result})
+    elif result.state == 'FAILURE':
+        return JsonResponse({"success": False, "status": "FAILURE", "error": str(result.info)})
+    else:
+        return JsonResponse({"success": True, "status": result.state})
+
+
+@csrf_exempt
+@require_GET
+@jwt_authenticated
+def get_dashboard_by_model(request):
+    """
+    Get the dashboard (charts) for a given model. GET with ?model_id=... Returns charts or error.
+    """
+    model_id = request.GET.get('model_id')
+    if not model_id:
+        return JsonResponse({'success': False, 'message': 'model_id is required.'}, status=400)
+    try:
+        model_entry = ModelEntry.objects.get(id=model_id)
+        dashboard = Dashboard.objects.get(model_entry=model_entry)
+        return JsonResponse({
+            'success': True,
+            'charts': dashboard.charts,
+            'title': model_entry.name,
+            'description': model_entry.description
+        })
+    except Dashboard.DoesNotExist:
+        return JsonResponse({'success': False, 'message': 'Dashboard not found.'}, status=404)
+    except ModelEntry.DoesNotExist:
+        return JsonResponse({'success': False, 'message': 'Model not found.'}, status=404)

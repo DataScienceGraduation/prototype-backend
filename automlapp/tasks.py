@@ -84,7 +84,7 @@ def train_model_task(entry_id):
         except Exception as e:
             raise ValueError(f"Error parsing task type: {str(e)}")
             
-        optimizer = RandomSearchOptimizer(task=task_enum, time_budget=300)
+        optimizer = RandomSearchOptimizer(task=task_enum, time_budget=100)
         metric_value = None  # Initialize metric_value
 
         if entry.task.lower() == 'clustering':

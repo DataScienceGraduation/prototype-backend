@@ -12,4 +12,9 @@ urlpatterns = [
     # Celery task endpoints
     path('task-status/', views.get_task_status, name='get_task_status'),
     path('report-by-task/', views.get_report_by_task, name='get_report_by_task'),
+
+    # Dashboard endpoints
+    path('start-suggest-charts/', views.start_suggest_charts, name='start_suggest_charts'),
+    path('get-suggest-charts-result/', views.get_suggest_charts_result, name='get_suggest_charts_result'),
+    path('get-dashboard-by-model/', views.get_dashboard_by_model, name='get_dashboard_by_model'),
 ]

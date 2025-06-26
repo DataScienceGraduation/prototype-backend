@@ -16,6 +16,7 @@ matplotlib.use('Agg')  # Use non-interactive backend
 import matplotlib.pyplot as plt
 import base64
 import io
+import os
 
 JWT_ALGORITHM = 'HS256'
 JWT_SECRET = settings.SECRET_KEY
@@ -412,3 +413,35 @@ def is_valid_token(token):
         return False
     except Exception:
         return False
+
+@csrf_exempt
+@require_GET
+@jwt_authenticated
+def getModelDataset(request):
+    """Get the actual dataset for a model"""
+    try:
+        model_id = request.GET.get('id')
+        if not model_id:
+            return JsonResponse({'success': False, 'message': 'Model ID is required'}, status=400)
+        
+        # Check if user has access to this model
+        user = User.objects.get(username=request.jwt_payload['username'])
+        if not user.models.filter(id=model_id).exists():
+            return JsonResponse({'success': False, 'message': 'Model not found or access denied'}, status=404)
+        
+        # Check if dataset file exists
+        dataset_path = f'data/{model_id}.csv'
+        if not os.path.exists(dataset_path):
+            return JsonResponse({'success': False, 'message': 'Dataset not found'}, status=404)
+        
+        # Read and return the dataset
+        df = pd.read_csv(dataset_path)
+        dataset_data = df.to_dict('records')  # Convert to list of dictionaries
+        
+        response = JsonResponse({'success': True, 'data': dataset_data}, status=200)
+        response["Access-Control-Allow-Origin"] = "http://localhost:3000"
+        return response
+        
+    except Exception as e:
+        print(f"Error in getting model dataset: {e}")
+        return JsonResponse({'success': False, 'message': 'There was an error'}, status=500)
