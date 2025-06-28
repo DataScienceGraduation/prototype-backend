@@ -159,3 +159,7 @@ zipp==3.22.0
 zstandard==0.23.0
 ydata-profiling
 google-generativeai
+dj-database-url
+azure-mgmt-compute
+azure-mgmt-network
+azure-mgmt-resource

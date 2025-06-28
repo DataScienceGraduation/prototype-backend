@@ -13,6 +13,7 @@ https://docs.djangoproject.com/en/5.1/ref/settings/
 from pathlib import Path
 import os
 from dotenv import load_dotenv
+import dj_database_url
 
 # Load environment variables from .env file
 load_dotenv()
@@ -65,7 +66,9 @@ CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
     "http://localhost:8001",
-    "https://automl-gp.netlify.app"
+    "https://automl-gp.netlify.app",
+    "https://symplifai.tech",
+    "https://mainwebsite.calmriver-ae051d1e.westeurope.azurecontainerapps.io",
 ]
 
 
@@ -93,12 +96,27 @@ WSGI_APPLICATION = 'automl_backend.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/5.1/ref/settings/#databases
 
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+
+# Environment-specific configuration
+ENV = os.getenv('ENV', 'development')
+
+if ENV == 'production':
+    # Production settings
+    DATABASES = {
+        'default': dj_database_url.config(conn_max_age=600)
     }
-}
+    CELERY_BROKER_URL = os.getenv('REDIS_URL')
+    CELERY_RESULT_BACKEND = os.getenv('REDIS_URL')
+else:
+    # Development settings
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': BASE_DIR / 'db.sqlite3',
+        }
+    }
+    CELERY_BROKER_URL = 'redis://localhost:6379/0'
+    CELERY_RESULT_BACKEND = 'redis://localhost:6379/0'
 
 
 # Password validation
@@ -141,7 +159,3 @@ STATIC_URL = 'static/'
 # https://docs.djangoproject.com/en/5.1/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
-
-
-CELERY_BROKER_URL = 'redis://localhost:6379/0'
-CELERY_RESULT_BACKEND = 'redis://localhost:6379/0'
