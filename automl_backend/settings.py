@@ -25,13 +25,8 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.1/howto/deployment/checklist/
 
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-q-t!^yne1^w5@8&1f7*6j)$9te4u)uckf^xbv0=xu^&c)e^in)'
 
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
 
-ALLOWED_HOSTS = []
 
 
 # Application definition
@@ -102,13 +97,28 @@ ENV = os.getenv('ENV', 'development')
 
 if ENV == 'production':
     # Production settings
+    SECRET_KEY = os.getenv('DJANGO_SECRET_KEY', 'your-default-secret-key')
+    ALLOWED_HOSTS = os.getenv('DJANGO_ALLOWED_HOSTS', 'localhost').split(',')
+    CORS_ALLOWED_ORIGINS = os.getenv('CORS_ALLOWED_ORIGINS', '').split(',')
+    DEBUG = False
     DATABASES = {
         'default': dj_database_url.config(conn_max_age=600)
     }
     CELERY_BROKER_URL = os.getenv('REDIS_URL')
     CELERY_RESULT_BACKEND = os.getenv('REDIS_URL')
+    
 else:
     # Development settings
+    # SECURITY WARNING: keep the secret key used in production secret!
+    SECRET_KEY = 'django-insecure-q-t!^yne1^w5@8&1f7*6j)$9te4u)uckf^xbv0=xu^&c)e^in)'
+    ALLOWED_HOSTS = ['localhost', '127.0.0.1']
+    CORS_ALLOWED_ORIGINS = [
+        "http://localhost:3000",
+        "http://127.0.1:3000",
+    ]
+
+    # SECURITY WARNING: don't run with debug turned on in production!
+    DEBUG = True
     DATABASES = {
         'default': {
             'ENGINE': 'django.db.backends.sqlite3',
@@ -117,7 +127,6 @@ else:
     }
     CELERY_BROKER_URL = 'redis://localhost:6379/0'
     CELERY_RESULT_BACKEND = 'redis://localhost:6379/0'
-
 
 # Password validation
 # https://docs.djangoproject.com/en/5.1/ref/settings/#auth-password-validators

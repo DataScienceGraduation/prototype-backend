@@ -44,6 +44,9 @@ jobs:
           imageToDeploy: ${{ secrets.REGISTRY_LOGIN_SERVER }}/automl-backend-web:${{ github.sha }}
           environmentVariables: |
             ENV=production
+            DJANGO_ALLOWED_HOSTS=api.symplifai.tech
+            CORS_ALLOWED_ORIGINS=https://symplifai.tech,https://www.symplifai.tech
+            DJANGO_SECRET_KEY=secretref:django-secret-key
             DATABASE_URL=secretref:database-url
             REDIS_URL=secretref:redis-url
             LLM_API_KEY=secretref:llm-api-key
@@ -59,6 +62,9 @@ jobs:
           imageToDeploy: ${{ secrets.REGISTRY_LOGIN_SERVER }}/automl-backend-celery:${{ github.sha }}
           environmentVariables: |
             ENV=production
+            DJANGO_ALLOWED_HOSTS=api.symplifai.tech
+            CORS_ALLOWED_ORIGINS=https://symplifai.tech,https://www.symplifai.tech
+            DJANGO_SECRET_KEY=secretref:django-secret-key
             DATABASE_URL=secretref:database-url
             REDIS_URL=secretref:redis-url
             LLM_API_KEY=secretref:llm-api-key
