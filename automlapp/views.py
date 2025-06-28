@@ -268,37 +268,122 @@ def loadData(request):
 @require_POST
 @jwt_authenticated
 def trainModel(request):
+    """
+    Process a model training request, validate parameters, and queue the training task.
+    """
+    logger.info(f"Received model training request from user: {request.jwt_payload['username']}")
+    
     try:
-        if not request.POST['name'] or not request.POST['description'] or not request.POST['task']:
-            return JsonResponse({'success': False, 'message': 'Missing required fields'}, status=400)
-        # Only require target_variable for non-clustering tasks
-        if request.POST['task'] != 'Clustering' and not request.POST['target_variable']:
-            return JsonResponse({'success': False, 'message': 'Target variable is required for non-clustering tasks'}, status=400)
-        # For time series tasks, require datetime_column and date_format
-        if request.POST['task'] == 'TimeSeries':
-            if not request.POST.get('datetime_column'):
-                return JsonResponse({'success': False, 'message': 'Datetime column is required for time series tasks'}, status=400)
-            if not request.POST.get('date_format'):
-                return JsonResponse({'success': False, 'message': 'Date format is required for time series tasks'}, status=400)
-        if not User.objects.filter(models=request.POST['id']).exists():
+        # Extract and validate required fields
+        model_id = request.POST.get('id')
+        name = request.POST.get('name', '').strip()
+        description = request.POST.get('description', '').strip()
+        task = request.POST.get('task', '').strip()
+        target_variable = request.POST.get('target_variable', '').strip()
+        
+        # Validate basic required fields
+        if not name:
+            logger.warning("Missing required field: name")
+            return JsonResponse({'success': False, 'message': 'Model name is required'}, status=400)
+        
+        if not description:
+            logger.warning("Missing required field: description")
+            return JsonResponse({'success': False, 'message': 'Model description is required'}, status=400)
+            
+        if not task:
+            logger.warning("Missing required field: task")
+            return JsonResponse({'success': False, 'message': 'Task type is required'}, status=400)
+            
+        if not model_id:
+            logger.warning("Missing required field: id")
+            return JsonResponse({'success': False, 'message': 'Model ID is required'}, status=400)
+        
+        # Validate task-specific required fields
+        if task != 'Clustering' and not target_variable:
+            logger.warning(f"Missing target_variable for {task} task")
+            return JsonResponse({
+                'success': False, 
+                'message': 'Target variable is required for non-clustering tasks'
+            }, status=400)
+        
+        # Validate time series specific parameters
+        if task == 'TimeSeries':
+            datetime_column = request.POST.get('datetime_column', '').strip()
+            date_format = request.POST.get('date_format', '').strip()
+            
+            if not datetime_column:
+                logger.warning("Missing datetime_column for TimeSeries task")
+                return JsonResponse({
+                    'success': False, 
+                    'message': 'Datetime column is required for time series tasks'
+                }, status=400)
+                
+            if not date_format:
+                logger.warning("Missing date_format for TimeSeries task")
+                return JsonResponse({
+                    'success': False, 
+                    'message': 'Date format is required for time series tasks'
+                }, status=400)
+        
+        # Verify model exists and user has access
+        try:
+            username = request.jwt_payload['username']
+            user = User.objects.get(username=username)
+            
+            if not user.models.filter(id=model_id).exists():
+                logger.warning(f"User {username} attempted to access non-existent or unauthorized model ID: {model_id}")
+                return JsonResponse({'success': False, 'message': 'Model not found or access denied'}, status=404)
+                
+            entry = ModelEntry.objects.get(id=model_id)
+            logger.info(f"Found model entry with ID {model_id}, updating with new parameters")
+            
+        except User.DoesNotExist:
+            logger.error(f"User {request.jwt_payload['username']} not found in database")
+            return JsonResponse({'success': False, 'message': 'User not found'}, status=404)
+        except ModelEntry.DoesNotExist:
+            logger.error(f"Model with ID {model_id} not found in database")
             return JsonResponse({'success': False, 'message': 'Model not found'}, status=404)
-        data = request.POST
-        entry = ModelEntry.objects.get(id=data['id'])
-        entry.name = data['name']
-        entry.description = data['description']
-        entry.task = data['task']
-        entry.target_variable = data['target_variable'] if 'target_variable' in data else ''
-        if entry.task == 'TimeSeries':
-            entry.datetime_column = data['datetime_column']
-            entry.date_format = data['date_format']
-        entry.status = 'Model Training'
-        entry.save()
-        train_model_task.delay(entry.id)
-        print("done")
-        return JsonResponse({'success': True}, status=200)
+        
+        # Update model entry with new parameters
+        try:
+            entry.name = name
+            entry.description = description
+            entry.task = task
+            entry.target_variable = target_variable
+            
+            if task == 'TimeSeries':
+                entry.datetime_column = datetime_column
+                entry.date_format = date_format
+                
+            entry.status = 'Model Training'
+            entry.save()
+            logger.info(f"Successfully updated model parameters for ID {model_id}")
+            
+        except Exception as e:
+            logger.error(f"Database error while updating model entry: {str(e)}")
+            return JsonResponse({'success': False, 'message': f'Error updating model: {str(e)}'}, status=500)
+        
+        # Queue the training task
+        try:
+            logger.info(f"Queuing training task for model ID {model_id}")
+            task_id = train_model_task.delay(entry.id)
+            logger.info(f"Training task queued successfully with task ID: {task_id}")
+            
+            return JsonResponse({
+                'success': True, 
+                'message': 'Model training has been queued',
+                'task_id': str(task_id)
+            }, status=200)
+            
+        except Exception as e:
+            logger.error(f"Failed to queue training task: {str(e)}")
+            entry.status = 'Error'
+            entry.save()
+            return JsonResponse({'success': False, 'message': f'Failed to queue training task: {str(e)}'}, status=500)
+            
     except Exception as e:
-        print(f"Error in training model: {e}")
-        return JsonResponse({'success': False, 'message': 'There was an error'}, status=500)
+        logger.exception(f"Unexpected error in trainModel: {str(e)}")
+        return JsonResponse({'success': False, 'message': f'There was an error: {str(e)}'}, status=500)
 
 
 @csrf_exempt
