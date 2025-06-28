@@ -47,24 +47,30 @@ jobs:
     - name: Deploy to Azure Container Apps
       uses: azure/container-apps-deploy-action@v1
       with:
-        resource-group: ${{ secrets.RESOURCE_GROUP }}
-        container-app-name: automl-backend-web
-        image-to-deploy: ${{ secrets.ACR_NAME }}.azurecr.io/automl-backend-web:${{ github.sha }}
-        environment-variables: |
+        resourceGroup: ${{ secrets.RESOURCE_GROUP }}
+        containerAppName: automl-backend-web
+        imageToDeploy: ${{ secrets.ACR_NAME }}.azurecr.io/automl-backend-web:${{ github.sha }}
+        environmentVariables: |
           ENV=production
           DATABASE_URL=secretref:database-url
           REDIS_URL=secretref:redis-url
+          LLM_API_KEY=secretref:llm-api-key
+          LLM_BASE_URL=secretref:llm-base-url
+          LLM_MODEL=secretref:llm-model
 
     - name: Deploy Celery to Azure Container Apps
       uses: azure/container-apps-deploy-action@v1
       with:
-        resource-group: ${{ secrets.RESOURCE_GROUP }}
-        container-app-name: automl-backend-celery
-        image-to-deploy: ${{ secrets.ACR_NAME }}.azurecr.io/automl-backend-celery:${{ github.sha }}
-        environment-variables: |
+        resourceGroup: ${{ secrets.RESOURCE_GROUP }}
+        containerAppName: automl-backend-celery
+        imageToDeploy: ${{ secrets.ACR_NAME }}.azurecr.io/automl-backend-celery:${{ github.sha }}
+        environmentVariables: |
           ENV=production
           DATABASE_URL=secretref:database-url
           REDIS_URL=secretref:redis-url
+          LLM_API_KEY=secretref:llm-api-key
+          LLM_BASE_URL=secretref:llm-base-url
+          LLM_MODEL=secretref:llm-model
 
     - name: Configure Celery Autoscaling
       uses: azure/cli@v1
