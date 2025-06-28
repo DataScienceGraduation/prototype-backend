@@ -21,6 +21,9 @@ ENV ENV=production
 # Copy the current directory contents into the container at /app
 COPY . /app
 
+# Create data, pipelines and models directories
+RUN mkdir -p /app/data /app/pipelines /app/models
+
 # Install any needed packages specified in requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
