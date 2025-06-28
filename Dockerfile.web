@@ -4,6 +4,11 @@ FROM python:3.10-slim-buster
 # Set the working directory in the container
 WORKDIR /app
 
+# Install git to allow cloning repositories if needed
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
 # Install system dependencies required for psycopg2
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
