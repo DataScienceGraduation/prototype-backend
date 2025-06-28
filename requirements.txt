@@ -163,3 +163,4 @@ dj-database-url
 azure-mgmt-compute
 azure-mgmt-network
 azure-mgmt-resource
+gunicorn==23.0.0
