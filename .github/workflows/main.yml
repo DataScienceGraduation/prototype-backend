@@ -1,86 +1,79 @@
-name: Deploy to Azure Container Apps
+# Docs for the Azure Container Apps Deploy action: https://github.com/Azure/container-apps-deploy-action
+# More GitHub Actions for Azure: https://github.com/Azure/actions
+
+name: Build and deploy to Azure Container Apps - automl
 
 on:
   push:
     branches:
       - main
+  workflow_dispatch:
 
 jobs:
-  build_and_deploy:
+  build-and-deploy:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v2
+      - uses: actions/checkout@v4
 
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v1
+      - name: Log in to Azure
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-    - name: Log in to Azure Container Registry
-      uses: docker/login-action@v1
-      with:
-        registry: ${{ secrets.ACR_NAME }}.azurecr.io
-        username: ${{ secrets.REGISTRY_USERNAME }}
-        password: ${{ secrets.REGISTRY_PASSWORD }}
+      - name: Log in to Azure Container Registry
+        uses: azure/docker-login@v1
+        with:
+          login-server: ${{ secrets.REGISTRY_LOGIN_SERVER }}
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
 
-    - name: Build and push web image
-      uses: docker/build-push-action@v2
-      with:
-        context: .
-        file: ./Dockerfile.web
-        push: true
-        tags: ${{ secrets.ACR_NAME }}.azurecr.io/automl-backend-web:${{ github.sha }}
+      - name: Build and push Docker images
+        run: |
+          docker build . -f Dockerfile.web -t ${{ secrets.REGISTRY_LOGIN_SERVER }}/automl-backend-web:${{ github.sha }}
+          docker build . -f Dockerfile.celery -t ${{ secrets.REGISTRY_LOGIN_SERVER }}/automl-backend-celery:${{ github.sha }}
+          docker push ${{ secrets.REGISTRY_LOGIN_SERVER }}/automl-backend-web:${{ github.sha }}
+          docker push ${{ secrets.REGISTRY_LOGIN_SERVER }}/automl-backend-celery:${{ github.sha }}
 
-    - name: Build and push celery image
-      uses: docker/build-push-action@v2
-      with:
-        context: .
-        file: ./Dockerfile.celery
-        push: true
-        tags: ${{ secrets.ACR_NAME }}.azurecr.io/automl-backend-celery:${{ github.sha }}
+      - name: Deploy web app to Azure Container Apps
+        uses: azure/container-apps-deploy-action@v1
+        with:
+          acrName: ${{ secrets.ACR_NAME }}
+          containerAppName: automl-backend-web
+          resourceGroup: ${{ secrets.RESOURCE_GROUP }}
+          imageToDeploy: ${{ secrets.REGISTRY_LOGIN_SERVER }}/automl-backend-web:${{ github.sha }}
+          environmentVariables: |
+            ENV=production
+            DATABASE_URL=secretref:database-url
+            REDIS_URL=secretref:redis-url
+            LLM_API_KEY=secretref:llm-api-key
+            LLM_BASE_URL=secretref:llm-base-url
+            LLM_MODEL=secretref:llm-model
 
-    - name: Log in to Azure
-      uses: azure/login@v1
-      with:
-        creds: ${{ secrets.AZURE_CREDENTIALS }}
-
-    - name: Deploy to Azure Container Apps
-      uses: azure/container-apps-deploy-action@v1
-      with:
-        resourceGroup: ${{ secrets.RESOURCE_GROUP }}
-        containerAppName: automl-backend-web
-        imageToDeploy: ${{ secrets.ACR_NAME }}.azurecr.io/automl-backend-web:${{ github.sha }}
-        environmentVariables: |
-          ENV=production
-          DATABASE_URL=secretref:database-url
-          REDIS_URL=secretref:redis-url
-          LLM_API_KEY=secretref:llm-api-key
-          LLM_BASE_URL=secretref:llm-base-url
-          LLM_MODEL=secretref:llm-model
-
-    - name: Deploy Celery to Azure Container Apps
-      uses: azure/container-apps-deploy-action@v1
-      with:
-        resourceGroup: ${{ secrets.RESOURCE_GROUP }}
-        containerAppName: automl-backend-celery
-        imageToDeploy: ${{ secrets.ACR_NAME }}.azurecr.io/automl-backend-celery:${{ github.sha }}
-        environmentVariables: |
-          ENV=production
-          DATABASE_URL=secretref:database-url
-          REDIS_URL=secretref:redis-url
-          LLM_API_KEY=secretref:llm-api-key
-          LLM_BASE_URL=secretref:llm-base-url
-          LLM_MODEL=secretref:llm-model
-
-    - name: Configure Celery Autoscaling
-      uses: azure/cli@v1
-      with:
-        inlineScript: |
-          az containerapp update \
-            --name automl-backend-celery \
-            --resource-group ${{ secrets.RESOURCE_GROUP }} \
-            --min-replicas 0 \
-            --max-replicas 5 \
-            --scale-rule-name redis-queue-scaler \
-            --scale-rule-type redis \
-            --scale-rule-metadata "connectionStringSettingRef"="redis-url" "listName"="celery" "listLength"="5"
+      - name: Deploy celery app to Azure Container Apps
+        uses: azure/container-apps-deploy-action@v1
+        with:
+          acrName: ${{ secrets.ACR_NAME }}
+          containerAppName: automl-backend-celery
+          resourceGroup: ${{ secrets.RESOURCE_GROUP }}
+          imageToDeploy: ${{ secrets.REGISTRY_LOGIN_SERVER }}/automl-backend-celery:${{ github.sha }}
+          environmentVariables: |
+            ENV=production
+            DATABASE_URL=secretref:database-url
+            REDIS_URL=secretref:redis-url
+            LLM_API_KEY=secretref:llm-api-key
+            LLM_BASE_URL=secretref:llm-base-url
+            LLM_MODEL=secretref:llm-model
+            
+      - name: Configure Celery Autoscaling
+        uses: azure/cli@v1
+        with:
+          inlineScript: |
+            az containerapp update \
+              --name automl-backend-celery \
+              --resource-group ${{ secrets.RESOURCE_GROUP }} \
+              --min-replicas 0 \
+              --max-replicas 5 \
+              --scale-rule-name redis-queue-scaler \
+              --scale-rule-type redis \
+              --scale-rule-metadata "connectionStringSettingRef"="redis-url" "listName"="celery" "listLength"="5"
