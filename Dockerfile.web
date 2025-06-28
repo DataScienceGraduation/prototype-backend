@@ -27,6 +27,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Expose the port Gunicorn will listen on
 EXPOSE 8000
 
-# Command to run the Gunicorn server
-CMD ["gunicorn", "automl_backend.wsgi:application", "--bind", "0.0.0.0:8000"]
+# Copy entrypoint script
+COPY entrypoint.sh /app/entrypoint.sh
+
+# Run entrypoint script
+ENTRYPOINT ["/app/entrypoint.sh"]
 
