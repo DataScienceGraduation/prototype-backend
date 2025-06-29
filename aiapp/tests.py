@@ -12,7 +12,10 @@ from .services import ReportGenerationService, ChartExportService, generate_repo
 from celery.result import AsyncResult
 import tempfile
 import os
+from django.conf import settings
 from django.core.files.storage import default_storage
+from django.core.files.base import ContentFile
+import io
 
 User = get_user_model()
 
@@ -124,7 +127,7 @@ class TestReportGenerationService(TestCase):
         # Save test data to CSV
         csv_buffer = io.StringIO()
         self.test_data.to_csv(csv_buffer, index=False)
-        file_path = os.path.join(settings.DATA_DIR, f'{self.model_entry.id}.csv')
+        file_path = f'data/{self.model_entry.id}.csv'
         default_storage.save(file_path, ContentFile(csv_buffer.getvalue().encode('utf-8')))
 
         self.service = ReportGenerationService()
@@ -132,7 +135,7 @@ class TestReportGenerationService(TestCase):
     def tearDown(self):
         """Clean up test files"""
         try:
-            file_path = os.path.join(settings.DATA_DIR, f'{self.model_entry.id}.csv')
+            file_path = f'data/{self.model_entry.id}.csv'
             default_storage.delete(file_path)
         except FileNotFoundError:
             pass
@@ -282,8 +285,10 @@ class TestReportViews(TestCase):
             'feature2': [10, 20, 30],
             'target': ['A', 'B', 'A']
         })
-        os.makedirs('data', exist_ok=True)
-        test_data.to_csv(f'data/{self.model_entry.id}.csv', index=False)
+        csv_buffer = io.StringIO()
+        test_data.to_csv(csv_buffer, index=False)
+        file_path = f'data/{self.model_entry.id}.csv'
+        default_storage.save(file_path, ContentFile(csv_buffer.getvalue().encode('utf-8')))
 
         # Mock JWT token
         self.jwt_payload = {'username': 'testuser'}
@@ -291,7 +296,8 @@ class TestReportViews(TestCase):
     def tearDown(self):
         """Clean up test files"""
         try:
-            os.remove(f'data/{self.model_entry.id}.csv')
+            file_path = f'data/{self.model_entry.id}.csv'
+            default_storage.delete(file_path)
         except FileNotFoundError:
             pass
 
@@ -378,8 +384,10 @@ class TestCeleryIntegration(TestCase):
             'feature2': [10, 20, 30, 40, 50],
             'target': ['A', 'B', 'A', 'B', 'A']
         })
-        os.makedirs('data', exist_ok=True)
-        test_data.to_csv(f'data/{self.model_entry.id}.csv', index=False)
+        csv_buffer = io.StringIO()
+        test_data.to_csv(csv_buffer, index=False)
+        file_path = f'data/{self.model_entry.id}.csv'
+        default_storage.save(file_path, ContentFile(csv_buffer.getvalue().encode('utf-8')))
 
         # Mock JWT token
         self.jwt_payload = {'username': 'testuser'}
@@ -387,7 +395,8 @@ class TestCeleryIntegration(TestCase):
     def tearDown(self):
         """Clean up test files"""
         try:
-            os.remove(f'data/{self.model_entry.id}.csv')
+            file_path = f'data/{self.model_entry.id}.csv'
+            default_storage.delete(file_path)
         except FileNotFoundError:
             pass
 

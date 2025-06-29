@@ -5,6 +5,8 @@ from django.views.decorators.csrf import csrf_exempt
 from django.http import JsonResponse
 from functools import wraps
 from automlapp.models import ModelEntry, User
+from django.core.files.storage import default_storage
+from django.core.files.base import ContentFile
 import pandas as pd
 from automlapp.tasks import train_model_task
 import joblib
@@ -237,8 +239,10 @@ def loadData(request):
             user.models.add(entry)
             
             # Save CSV file
-            file_path = os.path.join(settings.DATA_DIR, f'{entry.id}.csv')
-            df.to_csv(file_path, index=False)
+            file_path = f'data/{entry.id}.csv'
+            csv_buffer = io.StringIO()
+            df.to_csv(csv_buffer, index=False)
+            default_storage.save(file_path, ContentFile(csv_buffer.getvalue().encode('utf-8')))
             logger.info(f"Dataset saved to {file_path}")
             
             entry.save()
@@ -423,8 +427,9 @@ def getModel(request):
         dataset_info = {}
         try:
             import pandas as pd
-            file_path = os.path.join(settings.DATA_DIR, f'{entries.id}.csv')
-            df = pd.read_csv(file_path)
+            file_path = f'data/{entries.id}.csv'
+            with default_storage.open(file_path) as f:
+                df = pd.read_csv(f)
             dataset_info = {
                 'rows': len(df),
                 'columns': len(df.columns),
@@ -466,10 +471,12 @@ def infer(request):
         if not User.objects.filter(models=data['id']).exists():
             return JsonResponse({'success': False, 'message': 'Model not found'}, status=404)
         entry = ModelEntry.objects.get(id=data['id'])
-        model_path = os.path.join(settings.MODELS_DIR, f'{entry.id}.pkl')
-        pipeline_path = os.path.join(settings.PIPELINES_DIR, f'{entry.id}.pkl')
-        model = joblib.load(model_path)
-        pl = joblib.load(pipeline_path)
+        model_path = f'models/{entry.id}.pkl'
+        pipeline_path = f'pipelines/{entry.id}.pkl'
+        with default_storage.open(model_path) as f:
+            model = joblib.load(f)
+        with default_storage.open(pipeline_path) as f:
+            pl = joblib.load(f)
         data = json.loads(data['data'])
         print(data)
 
@@ -514,8 +521,9 @@ def infer(request):
             # For non-time series models, process the input data
             list_of_features = ast.literal_eval(entry.list_of_features)
             print(list_of_features)
-            file_path = os.path.join(settings.DATA_DIR, f'{entry.id}.csv')
-            df2 = pd.read_csv(file_path)
+            file_path = f'data/{entry.id}.csv'
+            with default_storage.open(file_path) as f:
+                df2 = pd.read_csv(f)
             target_variable_first_value = df2[entry.target_variable].iloc[0]
 
             for key, value in data.items():
@@ -576,12 +584,13 @@ def getModelDataset(request):
             return JsonResponse({'success': False, 'message': 'Model not found or access denied'}, status=404)
         
         # Check if dataset file exists
-        dataset_path = os.path.join(settings.DATA_DIR, f'{model_id}.csv')
-        if not os.path.exists(dataset_path):
+        dataset_path = f'data/{model_id}.csv'
+        if not default_storage.exists(dataset_path):
             return JsonResponse({'success': False, 'message': 'Dataset not found'}, status=404)
         
         # Read and return the dataset
-        df = pd.read_csv(dataset_path)
+        with default_storage.open(dataset_path) as f:
+            df = pd.read_csv(f)
         dataset_data = df.to_dict('records')  # Convert to list of dictionaries
         
         response = JsonResponse({'success': True, 'data': dataset_data}, status=200)

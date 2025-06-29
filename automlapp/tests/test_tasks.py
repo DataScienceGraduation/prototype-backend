@@ -33,7 +33,7 @@ def test_train_model_task(mocker):
     )
     
     # Save the dataframe to the storage
-    file_path = os.path.join(settings.DATA_DIR, f'{entry.id}.csv')
+    file_path = f'data/{entry.id}.csv'
     csv_buffer = io.StringIO()
     df.to_csv(csv_buffer, index=False)
     default_storage.save(file_path, ContentFile(csv_buffer.getvalue().encode('utf-8')))
@@ -82,7 +82,7 @@ def test_train_model_task(mocker):
     assert entry.model_name == 'XGBClassifier'
     
     # Ensure the model file has been saved
-    model_path = os.path.join(settings.MODELS_DIR, f'{entry.id}.pkl')
+    model_path = f'models/{entry.id}.pkl'
     assert default_storage.exists(model_path)
     
     # Clean up

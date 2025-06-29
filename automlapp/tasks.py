@@ -3,9 +3,12 @@ from .models import ModelEntry
 from automl.optimizers import RandomSearchOptimizer
 from automl.enums import Task, Metric
 from automl.functions import createPipeline
+from django.conf import settings
+from django.core.files.storage import default_storage
+from django.core.files.base import ContentFile
 import joblib
 import os
-from django.conf import settings
+import io
 import pandas as pd
 import logging
 import numpy as np
@@ -57,8 +60,9 @@ def train_model_task(entry_id):
         entry.save()
         logger.info(f"Loading data for entry ID: {entry_id}")
         
-        file_path = os.path.join(settings.DATA_DIR, f'{entry.id}.csv')
-        df = pd.read_csv(file_path)
+        file_path = f'data/{entry.id}.csv'
+        with default_storage.open(file_path) as f:
+            df = pd.read_csv(f)
 
         entry.status = 'Preprocessing Data'
         entry.save()
@@ -133,10 +137,17 @@ def train_model_task(entry_id):
         entry.evaluation_metric_value = abs(metric_value) if entry.task == 'TimeSeries' else metric_value
         logger.info(f"Model metrics - Task: {entry.task}, Metric: {entry.evaluation_metric}, Value: {entry.evaluation_metric_value}")
 
-        model_path = os.path.join(settings.MODELS_DIR, f'{entry.id}.pkl')
-        pipeline_path = os.path.join(settings.PIPELINES_DIR, f'{entry.id}.pkl')
-        joblib.dump(model, model_path)
-        joblib.dump(pipeline, pipeline_path)
+        model_path = f'models/{entry.id}.pkl'
+        pipeline_path = f'pipelines/{entry.id}.pkl'
+        
+        with io.BytesIO() as model_buffer:
+            joblib.dump(model, model_buffer)
+            default_storage.save(model_path, ContentFile(model_buffer.getvalue()))
+
+        with io.BytesIO() as pipeline_buffer:
+            joblib.dump(pipeline, pipeline_buffer)
+            default_storage.save(pipeline_path, ContentFile(pipeline_buffer.getvalue()))
+            
         logger.info(f"Model and pipeline saved for entry ID: {entry_id}")
 
         entry.status = 'Done'

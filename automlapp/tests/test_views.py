@@ -8,6 +8,8 @@ import pandas as pd
 import os
 from django.conf import settings
 from django.core.files.storage import default_storage
+from django.core.files.base import ContentFile
+import io
 
 @pytest.mark.django_db
 def test_load_data_view(mocker):
@@ -37,7 +39,7 @@ def test_load_data_view(mocker):
     assert entry is not None
     
     # Clean up the CSV file saved during the test
-    file_path = os.path.join(settings.DATA_DIR, f'{entry.id}.csv')
+    file_path = f'data/{entry.id}.csv'
     default_storage.delete(file_path)
 
 # tests/test_views.py

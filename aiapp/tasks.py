@@ -1,5 +1,3 @@
-from django.conf import settings
-from django.core.files.storage import default_storage
 from .models import Dashboard
 from celery import shared_task
 import pandas as pd
@@ -15,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 @shared_task
 def suggest_charts_task(model_id):
-    dataset_path = os.path.join(settings.DATA_DIR, f"{model_id}.csv")
+    dataset_path = f"data/{model_id}.csv"
     if not default_storage.exists(dataset_path):
         logger.error(f"Dataset not found: {dataset_path}")
         raise FileNotFoundError(f"Dataset not found: {dataset_path}")
@@ -58,4 +56,4 @@ def suggest_charts_task(model_id):
             logger.info(f"Dashboard status set to 'failed' for model {model_id}")
         except Exception as ex:
             logger.error(f"Could not update dashboard status to 'failed': {ex}")
-        raise 
+        raise

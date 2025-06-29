@@ -8,12 +8,12 @@ import os
 import json
 from typing import Dict, List, Any
 from django.conf import settings
+from django.core.files.storage import default_storage
 import google.generativeai as genai
 from celery import shared_task
 from google.generativeai.types import GenerationConfig
 import matplotlib.pyplot as plt
-import re 
-from django.core.files.storage import default_storage
+import re  # Add this at the top if not present
 
 # Try to import kaleido and configure it
 try:
@@ -290,14 +290,14 @@ class ReportGenerationService:
 
             update_progress(25, 'Loading and preprocessing data...')
             # Load raw training data
-            data_file_path = os.path.join(settings.DATA_DIR, f'{model_entry.id}.csv')
+            data_file_path = f'data/{model_entry.id}.csv'
             if not default_storage.exists(data_file_path):
                 raise FileNotFoundError(f"Training data file not found: {data_file_path}")
             with default_storage.open(data_file_path) as f:
                 df_raw = pd.read_csv(f)
 
             # Load the preprocessing pipeline and transform the data to get the actual model input
-            pipeline_path = os.path.join(settings.PIPELINES_DIR, f'{model_entry.id}.pkl')
+            pipeline_path = f'pipelines/{model_entry.id}.pkl'
             if not default_storage.exists(pipeline_path):
                 raise FileNotFoundError(f"Pipeline file not found: {pipeline_path}")
 
@@ -560,7 +560,7 @@ class ReportGenerationService:
                             current_python_code,
                             flags=re.MULTILINE
                         )
-                        current_python_code = re.sub(r'^\s*fig\.show\(\)\s*$', '', current_python_code, flags=re.MULTILINE)
+                        current_python_code = re.sub(r'^\s*fig\\.show\(\)\s*$', '', current_python_code, flags=re.MULTILINE)
                         current_python_code = current_python_code.replace('column_titles=df.columns', 'column_titles=list(df.columns)')
                         current_python_code = current_python_code.replace('row_titles=df.columns', 'row_titles=list(df.columns)')
 
