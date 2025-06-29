@@ -17,4 +17,8 @@ urlpatterns = [
     path('start-suggest-charts/', views.start_suggest_charts, name='start_suggest_charts'),
     path('get-suggest-charts-result/', views.get_suggest_charts_result, name='get_suggest_charts_result'),
     path('get-dashboard-by-model/', views.get_dashboard_by_model, name='get_dashboard_by_model'),
+    
+    # Data profiling endpoints
+    path('dataprofile/', views.dataprofile, name='dataprofile'),
+    path('delete-dataprofile/', views.delete_dataprofile, name='delete_dataprofile'),
 ]

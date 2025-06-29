@@ -1405,3 +1405,146 @@ class ChartExportService:
         except Exception as e:
             logger.error(f"Error getting chart summary: {e}")
             raise
+
+def generate_data_profile_js_code():
+    """
+    Generate JavaScript code for customizing data profile HTML reports.
+    
+    This function returns JavaScript code that:
+    1. Hides all section headers and content except overview initially
+    2. Adds click event listeners to navigation links to show/hide sections
+    3. Replaces all instances of "YData" with "Symplif.ai" branding
+    
+    Returns:
+        str: JavaScript code as a string
+    """
+    return """
+    document.addEventListener('DOMContentLoaded', function() {
+        // Hide all section headers and content except overview
+        const sectionItems = document.querySelectorAll('.section-items');
+        const sectionHeaders = document.querySelectorAll('.section-header');
+
+        // Initially hide non-overview sections
+        sectionItems.forEach(function(section) {
+            if (!section.previousElementSibling || section.previousElementSibling.id !== 'overview') {
+                section.style.display = 'none';
+            }
+        });
+
+        sectionHeaders.forEach(function(header) {
+            if (header.id !== 'overview') {
+                header.style.display = 'none';
+            }
+        });
+
+        // Add click event listeners to nav links
+        const navLinks = document.querySelectorAll('.navbar-nav .nav-link');
+        navLinks.forEach(function(link) {
+            link.addEventListener('click', function(e) {
+                // Get the target section ID from the href attribute
+                const targetId = this.getAttribute('href').substring(1);
+                
+                // Hide all sections
+                sectionItems.forEach(function(section) {
+                    section.style.display = 'none';
+                });
+                
+                sectionHeaders.forEach(function(header) {
+                    header.style.display = 'none';
+                });
+                
+                // Show the target section header and its content
+                const targetHeader = document.getElementById(targetId);
+                if (targetHeader) {
+                    // Show the section header
+                    targetHeader.style.display = 'block';
+                    
+                    // Find and show the section items that follow
+                    const nextElement = targetHeader.nextElementSibling;
+                    if (nextElement && nextElement.classList.contains('section-items')) {
+                        nextElement.style.display = 'block';
+                    }
+                }
+            });
+        });
+        
+        // Replace all instances of "YData" with "Symplif.ai"
+        function replaceYDataWithSymplif() {
+            // Get all text nodes in the document
+            const walker = document.createTreeWalker(
+                document.body,
+                NodeFilter.SHOW_TEXT,
+                null,
+                false
+            );
+
+            // Array to keep track of text nodes that need modification
+            const nodesToModify = [];
+            let node;
+            
+            // Find all text nodes containing "YData"
+            while (node = walker.nextNode()) {
+                if (node.nodeValue.includes('YData')) {
+                    nodesToModify.push(node);
+                }
+            }
+            
+            // Replace text in all identified nodes
+            nodesToModify.forEach(function(node) {
+                node.nodeValue = node.nodeValue.replace(/YData/g, 'Symplif.ai');
+            });
+            
+            // Also update attributes like title, alt, etc.
+            const elementsWithAttributes = document.querySelectorAll('[title], [alt], [placeholder], [aria-label]');
+            elementsWithAttributes.forEach(function(el) {
+                if (el.hasAttribute('title')) {
+                    el.setAttribute('title', el.getAttribute('title').replace(/YData/g, 'Symplif.ai'));
+                }
+                if (el.hasAttribute('alt')) {
+                    el.setAttribute('alt', el.getAttribute('alt').replace(/YData/g, 'Symplif.ai'));
+                }
+                if (el.hasAttribute('placeholder')) {
+                    el.setAttribute('placeholder', el.getAttribute('placeholder').replace(/YData/g, 'Symplif.ai'));
+                }
+                if (el.hasAttribute('aria-label')) {
+                    el.setAttribute('aria-label', el.getAttribute('aria-label').replace(/YData/g, 'Symplif.ai'));
+                }
+            });
+            
+            // Update document title
+            if (document.title.includes('YData')) {
+                document.title = document.title.replace(/YData/g, 'Symplif.ai');
+            }
+        }
+        
+        // Run the replacement function
+        replaceYDataWithSymplif();
+    });
+    """
+
+
+def inject_js_into_html(html_content, js_code):
+    """
+    Inject JavaScript code into HTML content by inserting it before the closing </body> tag.
+    
+    Args:
+        html_content (str): The original HTML content
+        js_code (str): JavaScript code to inject
+        
+    Returns:
+        str: HTML content with JavaScript injected
+    """
+    script_tag = f"\n<script>\n{js_code}\n</script>\n"
+    
+    # Check if HTML has a closing body tag
+    closing_combo = "</body></html>"
+    if closing_combo in html_content.replace(" ", "").replace("\n", ""):
+        idx = html_content.lower().rfind("</body>")
+        if idx != -1:
+            html_content = html_content[:idx] + script_tag + html_content[idx:]
+        else:
+            html_content += script_tag
+    else:
+        html_content += script_tag
+    
+    return html_content 

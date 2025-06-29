@@ -166,3 +166,23 @@ class Dashboard(models.Model):
 
     def __str__(self):
         return f"Dashboard for {self.model_entry.name}"
+
+
+class DataProfile(models.Model):
+    """
+    Model to store generated data profiles for models
+    """
+    id = models.AutoField(primary_key=True)
+    model_entry = models.ForeignKey('automlapp.ModelEntry', on_delete=models.CASCADE, related_name='data_profiles')
+    html_content = models.TextField(help_text="Generated HTML profile content")
+    dataset_shape = models.CharField(max_length=50, help_text="Dataset shape (rows, columns)")
+    columns = models.TextField(help_text="JSON string of column names")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        unique_together = ['model_entry']
+
+    def __str__(self):
+        return f"Data Profile for {self.model_entry.name}"

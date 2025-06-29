@@ -5,11 +5,12 @@ from django.views.decorators.csrf import csrf_exempt
 from django.core.paginator import Paginator
 from automlapp.views import jwt_authenticated
 from automlapp.models import ModelEntry, User
-from .models import Report, ChartData, DataInsight, Dashboard
-from .services import ReportGenerationService, ChartExportService, generate_report_async
+from .models import Report, ChartData, DataInsight, Dashboard, DataProfile
+from .services import ReportGenerationService, ChartExportService, generate_report_async, generate_data_profile_js_code, inject_js_into_html
 from celery.result import AsyncResult
 from .tasks import suggest_charts_task
 from django.core.files.storage import default_storage
+from ydata_profiling import ProfileReport
 import json
 import logging
 import pandas as pd
@@ -599,3 +600,135 @@ def get_dashboard_by_model(request):
         return JsonResponse({'success': False, 'message': 'Dashboard not found.'}, status=404)
     except ModelEntry.DoesNotExist:
         return JsonResponse({'success': False, 'message': 'Model not found.'}, status=404)
+
+
+@csrf_exempt
+@require_GET
+@jwt_authenticated
+def dataprofile(request):
+    """
+    Generate a minimal data profile for a model's dataset using ydata-profiling
+    """
+    try:
+        model_id = request.GET.get('id')
+        if not model_id:
+            return JsonResponse({'success': False, 'message': 'Model ID is required'}, status=400)
+        
+        # Check if user has access to this model
+        user = User.objects.get(username=request.jwt_payload['username'])
+        if not user.models.filter(id=model_id).exists():
+            return JsonResponse({'success': False, 'message': 'Model not found or access denied'}, status=404)
+        
+        # Get the model entry
+        model_entry = ModelEntry.objects.get(id=model_id)
+        
+        # Check if a data profile already exists for this model
+        try:
+            existing_profile = DataProfile.objects.get(model_entry=model_entry)
+            # Return existing profile
+            return JsonResponse({
+                'success': True,
+                'html': existing_profile.html_content,
+                'model_id': model_id,
+                'dataset_shape': existing_profile.dataset_shape,
+                'columns': json.loads(existing_profile.columns),
+                'cached': True,
+                'created_at': existing_profile.created_at.isoformat()
+            }, status=200)
+        except DataProfile.DoesNotExist:
+            # Profile doesn't exist, generate new one
+            pass
+        
+        # Check if dataset file exists
+        dataset_path = f'data/{model_id}.csv'
+        if not default_storage.exists(dataset_path):
+            return JsonResponse({'success': False, 'message': 'Dataset not found'}, status=404)
+        
+        # Read the dataset into a DataFrame
+        with default_storage.open(dataset_path) as f:
+            df = pd.read_csv(f)
+        
+        # Generate minimal profile report
+        profile = ProfileReport(
+            df, 
+            title=f"Data Profile for Model {model_id}",
+            sample=None
+        )
+        
+        # Generate HTML report
+        html_content = profile.to_html()
+
+        # Inject JavaScript code into the HTML
+        # js_code = generate_data_profile_js_code()
+        # html_content = inject_js_into_html(html_content, js_code)
+
+        # Save the profile to database
+        data_profile = DataProfile.objects.create(
+            model_entry=model_entry,
+            html_content=html_content,
+            dataset_shape=f"{df.shape[0]}, {df.shape[1]}",
+            columns=json.dumps(list(df.columns))
+        )
+        
+        return JsonResponse({
+            'success': True,
+            'html': html_content,
+            'model_id': model_id,
+            'dataset_shape': f"{df.shape[0]}, {df.shape[1]}",
+            'columns': list(df.columns),
+            'cached': False,
+            'created_at': data_profile.created_at.isoformat()
+        }, status=200)
+        
+    except Exception as e:
+        logger.error(f"Error in dataprofile endpoint: {e}")
+        return JsonResponse({
+            'success': False,
+            'message': f'Error generating data profile: {str(e)}'
+        }, status=500)
+
+
+@csrf_exempt
+@require_POST
+@jwt_authenticated
+def delete_dataprofile(request):
+    """
+    Delete a data profile for a model
+    """
+    try:
+        data = json.loads(request.body)
+        model_id = data.get('model_id')
+        
+        if not model_id:
+            return JsonResponse({'success': False, 'message': 'Model ID is required'}, status=400)
+        
+        # Check if user has access to this model
+        user = User.objects.get(username=request.jwt_payload['username'])
+        if not user.models.filter(id=model_id).exists():
+            return JsonResponse({'success': False, 'message': 'Model not found or access denied'}, status=404)
+        
+        # Get the model entry
+        model_entry = ModelEntry.objects.get(id=model_id)
+        
+        # Try to delete the existing profile
+        try:
+            existing_profile = DataProfile.objects.get(model_entry=model_entry)
+            existing_profile.delete()
+            return JsonResponse({
+                'success': True,
+                'message': 'Data profile deleted successfully'
+            }, status=200)
+        except DataProfile.DoesNotExist:
+            return JsonResponse({
+                'success': False,
+                'message': 'No data profile found for this model'
+            }, status=404)
+            
+    except ModelEntry.DoesNotExist:
+        return JsonResponse({'success': False, 'message': 'Model not found'}, status=404)
+    except Exception as e:
+        logger.error(f"Error deleting data profile: {e}")
+        return JsonResponse({
+            'success': False,
+            'message': f'Error deleting data profile: {str(e)}'
+        }, status=500)
