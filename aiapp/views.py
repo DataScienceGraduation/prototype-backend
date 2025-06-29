@@ -659,8 +659,8 @@ def dataprofile(request):
         html_content = profile.to_html()
 
         # Inject JavaScript code into the HTML
-        # js_code = generate_data_profile_js_code()
-        # html_content = inject_js_into_html(html_content, js_code)
+        js_code = generate_data_profile_js_code()
+        html_content = inject_js_into_html(html_content, js_code)
 
         # Save the profile to database
         data_profile = DataProfile.objects.create(

@@ -1419,108 +1419,129 @@ def generate_data_profile_js_code():
         str: JavaScript code as a string
     """
     return """
-    document.addEventListener('DOMContentLoaded', function() {
-        // Hide all section headers and content except overview
-        const sectionItems = document.querySelectorAll('.section-items');
-        const sectionHeaders = document.querySelectorAll('.section-header');
+  document.addEventListener('DOMContentLoaded', function() {
+    // Hide all section headers and content except overview
+    const sectionItems = document.querySelectorAll('.section-items');
+    const sectionHeaders = document.querySelectorAll('.section-header');
 
-        // Initially hide non-overview sections
-        sectionItems.forEach(function(section) {
-            if (!section.previousElementSibling || section.previousElementSibling.id !== 'overview') {
+    // Initially hide non-overview sections
+    sectionItems.forEach(function(section) {
+        if (!section.previousElementSibling || section.previousElementSibling.id !== 'overview') {
+            section.style.display = 'none';
+        }
+    });
+
+    sectionHeaders.forEach(function(header) {
+        if (header.id !== 'overview') {
+            header.style.display = 'none';
+        }
+    });
+
+    // Add click event listeners to nav links
+    const navLinks = document.querySelectorAll('.navbar-nav .nav-link');
+    navLinks.forEach(function(link) {
+        link.addEventListener('click', function(e) {
+            // Get the target section ID from the href attribute
+            const targetId = this.getAttribute('href').substring(1);
+            
+            // Hide all sections
+            sectionItems.forEach(function(section) {
                 section.style.display = 'none';
-            }
-        });
-
-        sectionHeaders.forEach(function(header) {
-            if (header.id !== 'overview') {
+            });
+            
+            sectionHeaders.forEach(function(header) {
                 header.style.display = 'none';
+            });
+            
+            // Show the target section header and its content
+            const targetHeader = document.getElementById(targetId);
+            if (targetHeader) {
+                // Show the section header
+                targetHeader.style.display = 'block';
+                
+                // Find and show the section items that follow
+                const nextElement = targetHeader.nextElementSibling;
+                if (nextElement && nextElement.classList.contains('section-items')) {
+                    nextElement.style.display = 'block';
+                }
             }
         });
+    });
+     // Replace all instances of "YData" with "Symplif.ai"
+    function replaceYDataWithSymplif() {
+        // Get all text nodes in the document
+        const walker = document.createTreeWalker(
+            document.body,
+            NodeFilter.SHOW_TEXT,
+            null,
+            false
+        );
 
-        // Add click event listeners to nav links
-        const navLinks = document.querySelectorAll('.navbar-nav .nav-link');
-        navLinks.forEach(function(link) {
-            link.addEventListener('click', function(e) {
-                // Get the target section ID from the href attribute
-                const targetId = this.getAttribute('href').substring(1);
-                
-                // Hide all sections
-                sectionItems.forEach(function(section) {
-                    section.style.display = 'none';
-                });
-                
-                sectionHeaders.forEach(function(header) {
-                    header.style.display = 'none';
-                });
-                
-                // Show the target section header and its content
-                const targetHeader = document.getElementById(targetId);
-                if (targetHeader) {
-                    // Show the section header
-                    targetHeader.style.display = 'block';
-                    
-                    // Find and show the section items that follow
-                    const nextElement = targetHeader.nextElementSibling;
-                    if (nextElement && nextElement.classList.contains('section-items')) {
-                        nextElement.style.display = 'block';
-                    }
-                }
-            });
-        });
+        // Array to keep track of text nodes that need modification
+        const nodesToModify = [];
+        let node;
         
-        // Replace all instances of "YData" with "Symplif.ai"
-        function replaceYDataWithSymplif() {
-            // Get all text nodes in the document
-            const walker = document.createTreeWalker(
-                document.body,
-                NodeFilter.SHOW_TEXT,
-                null,
-                false
-            );
-
-            // Array to keep track of text nodes that need modification
-            const nodesToModify = [];
-            let node;
-            
-            // Find all text nodes containing "YData"
-            while (node = walker.nextNode()) {
-                if (node.nodeValue.includes('YData')) {
-                    nodesToModify.push(node);
-                }
-            }
-            
-            // Replace text in all identified nodes
-            nodesToModify.forEach(function(node) {
-                node.nodeValue = node.nodeValue.replace(/YData/g, 'Symplif.ai');
-            });
-            
-            // Also update attributes like title, alt, etc.
-            const elementsWithAttributes = document.querySelectorAll('[title], [alt], [placeholder], [aria-label]');
-            elementsWithAttributes.forEach(function(el) {
-                if (el.hasAttribute('title')) {
-                    el.setAttribute('title', el.getAttribute('title').replace(/YData/g, 'Symplif.ai'));
-                }
-                if (el.hasAttribute('alt')) {
-                    el.setAttribute('alt', el.getAttribute('alt').replace(/YData/g, 'Symplif.ai'));
-                }
-                if (el.hasAttribute('placeholder')) {
-                    el.setAttribute('placeholder', el.getAttribute('placeholder').replace(/YData/g, 'Symplif.ai'));
-                }
-                if (el.hasAttribute('aria-label')) {
-                    el.setAttribute('aria-label', el.getAttribute('aria-label').replace(/YData/g, 'Symplif.ai'));
-                }
-            });
-            
-            // Update document title
-            if (document.title.includes('YData')) {
-                document.title = document.title.replace(/YData/g, 'Symplif.ai');
+        // Find all text nodes containing "YData"
+        while (node = walker.nextNode()) {
+            if (node.nodeValue.includes('YData')) {
+                nodesToModify.push(node);
             }
         }
         
-        // Run the replacement function
-        replaceYDataWithSymplif();
-    });
-    """
+        // Replace text in all identified nodes
+        nodesToModify.forEach(function(node) {
+            node.nodeValue = node.nodeValue.replace(/YData/g, 'Symplif.ai');
+        });
+        
+        // Also update attributes like title, alt, etc.
+        const elementsWithAttributes = document.querySelectorAll('[title], [alt], [placeholder], [aria-label]');
+        elementsWithAttributes.forEach(function(el) {
+            if (el.hasAttribute('title')) {
+                el.setAttribute('title', el.getAttribute('title').replace(/YData/g, 'Symplif.ai'));
+            }
+            if (el.hasAttribute('alt')) {
+                el.setAttribute('alt', el.getAttribute('alt').replace(/YData/g, 'Symplif.ai'));
+            }
+            if (el.hasAttribute('placeholder')) {
+                el.setAttribute('placeholder', el.getAttribute('placeholder').replace(/YData/g, 'Symplif.ai'));
+            }
+            if (el.hasAttribute('aria-label')) {
+                el.setAttribute('aria-label', el.getAttribute('aria-label').replace(/YData/g, 'Symplif.ai'));
+            }
+        });
+        
+        // Update document title
+        if (document.title.includes('YData')) {
+            document.title = document.title.replace(/YData/g, 'Symplif.ai');
+        }
+
+    }
+    
+    // Run the replacement function
+    replaceYDataWithSymplif();
+});
+
+function renameNavTags() {
+  const navs = document.querySelectorAll('nav');
+  navs.forEach(nav => {
+    const navv = document.createElement('navv');
+
+    // Copy attributes
+    for (let attr of nav.attributes) {
+      navv.setAttribute(attr.name, attr.value);
+    }
+
+    // Copy children
+    while (nav.firstChild) {
+      navv.appendChild(nav.firstChild);
+    }
+
+    // Replace old nav with new navv
+    nav.parentNode.replaceChild(navv, nav);
+  });
+}
+renameNavTags();
+"""
 
 
 def inject_js_into_html(html_content, js_code):
