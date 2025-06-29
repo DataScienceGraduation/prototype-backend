@@ -133,7 +133,6 @@ def get_report(request):
                 'chart_code': chart.chart_code,
                 'llm_reasoning': chart.llm_reasoning,
                 'chart_image_base64': chart.chart_image_base64,
-                'chart_html': chart.chart_html,
                 'created_at': chart.created_at.isoformat()
             })
 
@@ -475,7 +474,6 @@ def get_report_by_task(request):
                         'chart_code': chart.chart_code,
                         'llm_reasoning': chart.llm_reasoning,
                         'chart_image_base64': chart.chart_image_base64,
-                        'chart_html': chart.chart_html,
                         'created_at': chart.created_at.isoformat()
                     })
 

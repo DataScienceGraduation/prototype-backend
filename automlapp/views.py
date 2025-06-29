@@ -20,6 +20,7 @@ import base64
 import io
 import os
 import logging
+from django.http import HttpResponse
 
 
 logger = logging.getLogger(__name__)
@@ -545,10 +546,8 @@ def infer(request):
             prediction = model.predict(df)
             print(f"Prediction: {prediction}")
             finalPrediction = prediction[0]
-            if entry.task == 'Classification' and len(df2[entry.target_variable].unique()) == 2:
-                finalPrediction = 'True' if finalPrediction == 1 else 'False'
-
-        return JsonResponse({'success': True, 'prediction': str(finalPrediction)}, status=200)
+            # Always return the raw model output
+            return JsonResponse({'success': True, 'prediction': finalPrediction}, status=200)
     except Exception as e:
         if '0 sample' in str(e):
             return JsonResponse({'success': False, 'message': 'Provided Row is an outlier'}, status=400)
@@ -600,3 +599,92 @@ def getModelDataset(request):
     except Exception as e:
         print(f"Error in getting model dataset: {e}")
         return JsonResponse({'success': False, 'message': 'There was an error'}, status=500)
+    
+@csrf_exempt
+@require_POST
+@jwt_authenticated
+def batchPredict(request):
+    """
+    Batch prediction endpoint. Accepts a CSV file and model id, returns the same CSV with a prediction column as a downloadable file.
+    """
+    try:
+        # Validate file and model id
+        if 'file' not in request.FILES:
+            return JsonResponse({'success': False, 'message': 'No file provided'}, status=400)
+        file_obj = request.FILES['file']
+        model_id = request.POST.get('model_id') or request.POST.get('id')
+        if not model_id:
+            return JsonResponse({'success': False, 'message': 'Model ID is required'}, status=400)
+
+        # Check user access
+        user = User.objects.get(username=request.jwt_payload['username'])
+        if not user.models.filter(id=model_id).exists():
+            return JsonResponse({'success': False, 'message': 'Model not found or access denied'}, status=404)
+        entry = ModelEntry.objects.get(id=model_id)
+
+        # Disallow batch prediction for TimeSeries models
+        if entry.task == 'TimeSeries':
+            return JsonResponse({'success': False, 'message': 'Batch prediction is not supported for TimeSeries models. Please use the single prediction form.'}, status=400)
+
+        # Read CSV
+        try:
+            df = pd.read_csv(file_obj)
+            if df.empty:
+                return JsonResponse({'success': False, 'message': 'The uploaded file is empty'}, status=400)
+        except Exception as e:
+            return JsonResponse({'success': False, 'message': f'Error parsing your file: {str(e)}'}, status=400)
+
+        # Load model and pipeline
+        model_path = f'models/{entry.id}.pkl'
+        pipeline_path = f'pipelines/{entry.id}.pkl'
+        with default_storage.open(model_path) as f:
+            model = joblib.load(f)
+        with default_storage.open(pipeline_path) as f:
+            pl = joblib.load(f)
+
+        # Non-time series: preprocess and predict for each row
+        try:
+            list_of_features = ast.literal_eval(entry.list_of_features)
+        except Exception:
+            list_of_features = entry.list_of_features
+        # Fill missing target variable if needed
+        file_path = f'data/{entry.id}.csv'
+        with default_storage.open(file_path) as f:
+            df2 = pd.read_csv(f)
+        target_variable_first_value = df2[entry.target_variable].iloc[0] if entry.target_variable in df2 else None
+        # Prepare input
+        input_df = df.copy()
+        if entry.target_variable and entry.target_variable not in input_df.columns and target_variable_first_value is not None:
+            input_df[entry.target_variable] = target_variable_first_value
+        # Type conversion
+        for key in input_df.columns:
+            if key in list_of_features:
+                if list_of_features[key] == 'integer':
+                    input_df[key] = input_df[key].astype('Int64')
+                elif list_of_features[key] == 'float':
+                    input_df[key] = input_df[key].astype(float)
+        # Preprocess
+        try:
+            processed = pl.transform(input_df)
+            if entry.target_variable in processed.columns:
+                processed = processed.drop(entry.target_variable, axis=1)
+        except Exception as e:
+            return JsonResponse({'success': False, 'message': f'Error in preprocessing: {str(e)}'}, status=400)
+        # Predict
+        try:
+            preds = model.predict(processed)
+            # Always return the raw model output
+            df['prediction'] = preds
+        except Exception as e:
+            return JsonResponse({'success': False, 'message': f'Error in prediction: {str(e)}'}, status=400)
+
+        # Return the CSV file with predictions
+        csv_buffer = io.StringIO()
+        df.to_csv(csv_buffer, index=False)
+        csv_buffer.seek(0)
+        response = HttpResponse(csv_buffer.getvalue(), content_type='text/csv')
+        response['Content-Disposition'] = 'attachment; filename="batch_predictions.csv"'
+        return response
+    except Exception as e:
+        logger.exception(f"Unexpected error in batch_predict: {str(e)}")
+        return JsonResponse({'success': False, 'message': f'There was an error: {str(e)}'}, status=500)
