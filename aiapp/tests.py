@@ -12,6 +12,7 @@ from .services import ReportGenerationService, ChartExportService, generate_repo
 from celery.result import AsyncResult
 import tempfile
 import os
+from django.core.files.storage import default_storage
 
 User = get_user_model()
 
@@ -121,15 +122,18 @@ class TestReportGenerationService(TestCase):
         })
 
         # Save test data to CSV
-        os.makedirs(settings.DATA_DIR, exist_ok=True)
-        self.test_data.to_csv(os.path.join(settings.DATA_DIR, f'{self.model_entry.id}.csv'), index=False)
+        csv_buffer = io.StringIO()
+        self.test_data.to_csv(csv_buffer, index=False)
+        file_path = os.path.join(settings.DATA_DIR, f'{self.model_entry.id}.csv')
+        default_storage.save(file_path, ContentFile(csv_buffer.getvalue().encode('utf-8')))
 
         self.service = ReportGenerationService()
 
     def tearDown(self):
         """Clean up test files"""
         try:
-            os.remove(os.path.join(settings.DATA_DIR, f'{self.model_entry.id}.csv'))
+            file_path = os.path.join(settings.DATA_DIR, f'{self.model_entry.id}.csv')
+            default_storage.delete(file_path)
         except FileNotFoundError:
             pass
 

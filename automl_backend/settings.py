@@ -111,7 +111,7 @@ if ENV == 'production':
     AZURE_ACCOUNT_NAME = os.getenv('AZURE_ACCOUNT_NAME')
     AZURE_ACCOUNT_KEY = os.getenv('AZURE_ACCOUNT_KEY')
     AZURE_CONTAINER = os.getenv('AZURE_CONTAINER')
-    AZURE_URL = f'https://{AZURE_ACCOUNT_NAME}.privatelink.blob.core.windows.net/'
+    AZURE_URL = f'https://{AZURE_ACCOUNT_NAME}.blob.core.windows.net/'
 
     # Static and media files storage
     DEFAULT_FILE_STORAGE = 'storages.backends.azure_storage.AzureStorage'

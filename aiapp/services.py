@@ -12,7 +12,8 @@ import google.generativeai as genai
 from celery import shared_task
 from google.generativeai.types import GenerationConfig
 import matplotlib.pyplot as plt
-import re  # Add this at the top if not present
+import re 
+from django.core.files.storage import default_storage
 
 # Try to import kaleido and configure it
 try:
@@ -290,17 +291,19 @@ class ReportGenerationService:
             update_progress(25, 'Loading and preprocessing data...')
             # Load raw training data
             data_file_path = os.path.join(settings.DATA_DIR, f'{model_entry.id}.csv')
-            if not os.path.exists(data_file_path):
+            if not default_storage.exists(data_file_path):
                 raise FileNotFoundError(f"Training data file not found: {data_file_path}")
-            df_raw = pd.read_csv(data_file_path)
+            with default_storage.open(data_file_path) as f:
+                df_raw = pd.read_csv(f)
 
             # Load the preprocessing pipeline and transform the data to get the actual model input
             pipeline_path = os.path.join(settings.PIPELINES_DIR, f'{model_entry.id}.pkl')
-            if not os.path.exists(pipeline_path):
+            if not default_storage.exists(pipeline_path):
                 raise FileNotFoundError(f"Pipeline file not found: {pipeline_path}")
 
             import joblib
-            pipeline = joblib.load(pipeline_path)
+            with default_storage.open(pipeline_path) as f:
+                pipeline = joblib.load(f)
             df = pipeline.transform(df_raw)
 
             logger.info(f"Using preprocessed data for insights. Raw shape: {df_raw.shape}, Processed shape: {df.shape}")
