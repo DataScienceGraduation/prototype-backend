@@ -117,7 +117,7 @@ if ENV == 'production':
         'default': {
             'BACKEND': 'storages.backends.azure_storage.AzureStorage',
             'OPTIONS': {
-                'azure_connection_string': f'DefaultEndpointsProtocol=https;AccountName={AZURE_ACCOUNT_NAME};AccountKey={AZURE_ACCOUNT_KEY};EndpointSuffix=core.windows.net',
+                'connection_string': f'DefaultEndpointsProtocol=https;AccountName={AZURE_ACCOUNT_NAME};AccountKey={AZURE_ACCOUNT_KEY};EndpointSuffix=core.windows.net',
                 'azure_container': AZURE_CONTAINER,
             },
         },
