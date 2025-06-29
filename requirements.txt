@@ -164,4 +164,5 @@ azure-mgmt-compute
 azure-mgmt-network
 azure-mgmt-resource
 gunicorn==23.0.0
-psycopg2-binary==2.9.10django-storages[azure]
+psycopg2-binary==2.9.10
+django-storages[azure]
