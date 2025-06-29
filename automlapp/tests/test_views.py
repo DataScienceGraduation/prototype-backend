@@ -6,20 +6,23 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from automlapp.models import ModelEntry
 import pandas as pd
 import os
+from django.conf import settings
 
 @pytest.mark.django_db
-def test_load_data_view():
+def test_load_data_view(mocker):
     client = Client()
     
     # Create a sample CSV file for testing
     sample_data = "feature1,feature2,target\n1,2,A\n3,4,B\n5,6,A"
     sample_file = SimpleUploadedFile("test.csv", sample_data.encode('utf-8'), content_type="text/csv")
     
+    # Mock the necessary functions
+    mocker.patch('automlapp.views.jwt_authenticated', lambda x: x)  # Mock authentication
+    
     # Send POST request to loadData endpoint with the sample file
     response = client.post(reverse('loadData'), {'file': sample_file})
     
     # Check response
-    print(response)
     assert response.status_code == 200
     data = response.json()
     
@@ -33,7 +36,8 @@ def test_load_data_view():
     assert entry is not None
     
     # Clean up the CSV file saved during the test
-    os.remove(f'data/{entry.id}.csv')
+    file_path = os.path.join(settings.DATA_DIR, f'{entry.id}.csv')
+    os.remove(file_path)
 
 # tests/test_views.py
 @pytest.mark.django_db
@@ -54,7 +58,8 @@ def test_train_model_view(mocker):
     )
     
     # Mock the Celery task to avoid actually running it during the test
-    mocker.patch('automl.tasks.train_model_task.delay')
+    mocker.patch('automlapp.tasks.train_model_task.delay')
+    mocker.patch('automlapp.views.jwt_authenticated', lambda x: x)  # Mock authentication
 
     # Send POST request to trainModel endpoint
     response = client.post(reverse('trainModel'), {

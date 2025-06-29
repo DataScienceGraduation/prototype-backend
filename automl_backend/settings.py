@@ -106,6 +106,26 @@ if ENV == 'production':
     }
     CELERY_BROKER_URL = os.getenv('REDIS_URL')
     CELERY_RESULT_BACKEND = os.getenv('REDIS_URL')
+
+    # Azure Blob Storage settings
+    AZURE_ACCOUNT_NAME = os.getenv('AZURE_ACCOUNT_NAME')
+    AZURE_ACCOUNT_KEY = os.getenv('AZURE_ACCOUNT_KEY')
+    AZURE_CONTAINER = os.getenv('AZURE_CONTAINER')
+    AZURE_URL = f'https://{AZURE_ACCOUNT_NAME}.blob.core.windows.net/'
+
+    # Static and media files storage
+    DEFAULT_FILE_STORAGE = 'storages.backends.azure_storage.AzureStorage'
+    STATICFILES_STORAGE = 'storages.backends.azure_storage.AzureStorage'
+    
+    # Define the locations for data, models, and pipelines in Azure
+    AZURE_DATA_LOCATION = 'data'
+    AZURE_MODELS_LOCATION = 'models'
+    AZURE_PIPELINES_LOCATION = 'pipelines'
+
+    # Custom settings for your folder paths
+    DATA_DIR = os.path.join(AZURE_URL, AZURE_DATA_LOCATION)
+    MODELS_DIR = os.path.join(AZURE_URL, AZURE_MODELS_LOCATION)
+    PIPELINES_DIR = os.path.join(AZURE_URL, AZURE_PIPELINES_LOCATION)
     
 else:
     # Development settings
@@ -127,6 +147,16 @@ else:
     }
     CELERY_BROKER_URL = 'redis://localhost:6379/0'
     CELERY_RESULT_BACKEND = 'redis://localhost:6379/0'
+
+    # Local paths for development
+    DATA_DIR = os.path.join(BASE_DIR, 'data')
+    MODELS_DIR = os.path.join(BASE_DIR, 'models')
+    PIPELINES_DIR = os.path.join(BASE_DIR, 'pipelines')
+
+# Create directories if they don't exist
+for dir_path in [DATA_DIR, MODELS_DIR, PIPELINES_DIR]:
+    if not os.path.exists(dir_path) and ENV != 'production':
+        os.makedirs(dir_path)
 
 # Password validation
 # https://docs.djangoproject.com/en/5.1/ref/settings/#auth-password-validators

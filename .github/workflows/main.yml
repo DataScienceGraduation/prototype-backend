@@ -42,7 +42,7 @@ jobs:
           containerAppName: automl-backend-web
           resourceGroup: ${{ secrets.RESOURCE_GROUP }}
           imageToDeploy: ${{ secrets.REGISTRY_LOGIN_SERVER }}/automl-backend-web:${{ github.sha }}
-          environmentVariables: ENV=production DJANGO_ALLOWED_HOSTS=api.symplifai.tech CORS_ALLOWED_ORIGINS=https://symplifai.tech,https://www.symplifai.tech DJANGO_SECRET_KEY=secretref:django-secret-key DATABASE_URL=secretref:database-url REDIS_URL=secretref:redis-url LLM_API_KEY=secretref:llm-api-key LLM_BASE_URL=secretref:llm-base-url LLM_MODEL=secretref:llm-model
+          environmentVariables: ENV=production DJANGO_ALLOWED_HOSTS=api.symplifai.tech CORS_ALLOWED_ORIGINS=https://symplifai.tech,https://www.symplifai.tech DJANGO_SECRET_KEY=secretref:django-secret-key DATABASE_URL=secretref:database-url REDIS_URL=secretref:redis-url LLM_API_KEY=secretref:llm-api-key LLM_BASE_URL=secretref:llm-base-url LLM_MODEL=secretref:llm-model AZURE_ACCOUNT_NAME=secretref:azure-account-name AZURE_ACCOUNT_KEY=secretref:azure-account-key AZURE_CONTAINER=secretref:azure-container
 
       - name: Deploy celery app to Azure Container Apps
         uses: azure/container-apps-deploy-action@v1
@@ -51,7 +51,7 @@ jobs:
           containerAppName: automl-backend-celery
           resourceGroup: ${{ secrets.RESOURCE_GROUP }}
           imageToDeploy: ${{ secrets.REGISTRY_LOGIN_SERVER }}/automl-backend-celery:${{ github.sha }}
-          environmentVariables: ENV=production DJANGO_ALLOWED_HOSTS=api.symplifai.tech CORS_ALLOWED_ORIGINS=https://symplifai.tech,https://www.symplifai.tech DJANGO_SECRET_KEY=secretref:django-secret-key DATABASE_URL=secretref:database-url REDIS_URL=secretref:redis-url LLM_API_KEY=secretref:llm-api-key LLM_BASE_URL=secretref:llm-base-url LLM_MODEL=secretref:llm-model
+          environmentVariables: ENV=production DJANGO_ALLOWED_HOSTS=api.symplifai.tech CORS_ALLOWED_ORIGINS=https://symplifai.tech,https://www.symplifai.tech DJANGO_SECRET_KEY=secretref:django-secret-key DATABASE_URL=secretref:database-url REDIS_URL=secretref:redis-url LLM_API_KEY=secretref:llm-api-key LLM_BASE_URL=secretref:llm-base-url LLM_MODEL=secretref:llm-model AZURE_ACCOUNT_NAME=secretref:azure-account-name AZURE_ACCOUNT_KEY=secretref:azure-account-key AZURE_CONTAINER=secretref:azure-container
 
             
       - name: Configure Celery Autoscaling

@@ -121,15 +121,15 @@ class TestReportGenerationService(TestCase):
         })
 
         # Save test data to CSV
-        os.makedirs('data', exist_ok=True)
-        self.test_data.to_csv(f'data/{self.model_entry.id}.csv', index=False)
+        os.makedirs(settings.DATA_DIR, exist_ok=True)
+        self.test_data.to_csv(os.path.join(settings.DATA_DIR, f'{self.model_entry.id}.csv'), index=False)
 
         self.service = ReportGenerationService()
 
     def tearDown(self):
         """Clean up test files"""
         try:
-            os.remove(f'data/{self.model_entry.id}.csv')
+            os.remove(os.path.join(settings.DATA_DIR, f'{self.model_entry.id}.csv'))
         except FileNotFoundError:
             pass
 

@@ -289,13 +289,13 @@ class ReportGenerationService:
 
             update_progress(25, 'Loading and preprocessing data...')
             # Load raw training data
-            data_file_path = f'data/{model_entry.id}.csv'
+            data_file_path = os.path.join(settings.DATA_DIR, f'{model_entry.id}.csv')
             if not os.path.exists(data_file_path):
                 raise FileNotFoundError(f"Training data file not found: {data_file_path}")
             df_raw = pd.read_csv(data_file_path)
 
             # Load the preprocessing pipeline and transform the data to get the actual model input
-            pipeline_path = f'pipelines/{model_entry.id}.pkl'
+            pipeline_path = os.path.join(settings.PIPELINES_DIR, f'{model_entry.id}.pkl')
             if not os.path.exists(pipeline_path):
                 raise FileNotFoundError(f"Pipeline file not found: {pipeline_path}")
 

@@ -5,6 +5,7 @@ from automl.enums import Task, Metric
 from automl.functions import createPipeline
 import joblib
 import os
+from django.conf import settings
 import pandas as pd
 import logging
 import numpy as np
@@ -55,7 +56,9 @@ def train_model_task(entry_id):
         entry.status = 'Loading Data'
         entry.save()
         logger.info(f"Loading data for entry ID: {entry_id}")
-        df = pd.read_csv(f'data/{entry.id}.csv')
+        
+        file_path = os.path.join(settings.DATA_DIR, f'{entry.id}.csv')
+        df = pd.read_csv(file_path)
 
         entry.status = 'Preprocessing Data'
         entry.save()
@@ -130,10 +133,10 @@ def train_model_task(entry_id):
         entry.evaluation_metric_value = abs(metric_value) if entry.task == 'TimeSeries' else metric_value
         logger.info(f"Model metrics - Task: {entry.task}, Metric: {entry.evaluation_metric}, Value: {entry.evaluation_metric_value}")
 
-        os.makedirs('models', exist_ok=True)
-        os.makedirs('pipelines', exist_ok=True)
-        joblib.dump(model, f'models/{entry.id}.pkl')
-        joblib.dump(pipeline, f'pipelines/{entry.id}.pkl')
+        model_path = os.path.join(settings.MODELS_DIR, f'{entry.id}.pkl')
+        pipeline_path = os.path.join(settings.PIPELINES_DIR, f'{entry.id}.pkl')
+        joblib.dump(model, model_path)
+        joblib.dump(pipeline, pipeline_path)
         logger.info(f"Model and pipeline saved for entry ID: {entry_id}")
 
         entry.status = 'Done'

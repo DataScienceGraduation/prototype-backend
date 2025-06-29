@@ -237,7 +237,7 @@ def loadData(request):
             user.models.add(entry)
             
             # Save CSV file
-            file_path = f'data/{entry.id}.csv'
+            file_path = os.path.join(settings.DATA_DIR, f'{entry.id}.csv')
             df.to_csv(file_path, index=False)
             logger.info(f"Dataset saved to {file_path}")
             
@@ -423,7 +423,8 @@ def getModel(request):
         dataset_info = {}
         try:
             import pandas as pd
-            df = pd.read_csv(f'data/{entries.id}.csv')
+            file_path = os.path.join(settings.DATA_DIR, f'{entries.id}.csv')
+            df = pd.read_csv(file_path)
             dataset_info = {
                 'rows': len(df),
                 'columns': len(df.columns),
@@ -465,8 +466,10 @@ def infer(request):
         if not User.objects.filter(models=data['id']).exists():
             return JsonResponse({'success': False, 'message': 'Model not found'}, status=404)
         entry = ModelEntry.objects.get(id=data['id'])
-        model = joblib.load(f'models/{entry.id}.pkl')
-        pl = joblib.load(f'pipelines/{entry.id}.pkl')
+        model_path = os.path.join(settings.MODELS_DIR, f'{entry.id}.pkl')
+        pipeline_path = os.path.join(settings.PIPELINES_DIR, f'{entry.id}.pkl')
+        model = joblib.load(model_path)
+        pl = joblib.load(pipeline_path)
         data = json.loads(data['data'])
         print(data)
 
@@ -511,7 +514,8 @@ def infer(request):
             # For non-time series models, process the input data
             list_of_features = ast.literal_eval(entry.list_of_features)
             print(list_of_features)
-            df2 = pd.read_csv(f'data/{entry.id}.csv')
+            file_path = os.path.join(settings.DATA_DIR, f'{entry.id}.csv')
+            df2 = pd.read_csv(file_path)
             target_variable_first_value = df2[entry.target_variable].iloc[0]
 
             for key, value in data.items():
@@ -572,7 +576,7 @@ def getModelDataset(request):
             return JsonResponse({'success': False, 'message': 'Model not found or access denied'}, status=404)
         
         # Check if dataset file exists
-        dataset_path = f'data/{model_id}.csv'
+        dataset_path = os.path.join(settings.DATA_DIR, f'{model_id}.csv')
         if not os.path.exists(dataset_path):
             return JsonResponse({'success': False, 'message': 'Dataset not found'}, status=404)
         

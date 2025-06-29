@@ -5,6 +5,7 @@ from automlapp.tasks import train_model_task
 from unittest import mock
 import pandas as pd
 import os
+from django.conf import settings
 
 @pytest.mark.django_db
 def test_train_model_task(mocker):
@@ -73,7 +74,8 @@ def test_train_model_task(mocker):
     assert entry.model_name == 'XGBClassifier'
     
     # Ensure the model file has been saved
-    assert os.path.exists(f'models/{entry.id}.pkl')
+    model_path = os.path.join(settings.MODELS_DIR, f'{entry.id}.pkl')
+    assert os.path.exists(model_path)
     
     # Clean up
-    os.remove(f'models/{entry.id}.pkl')
+    os.remove(model_path)

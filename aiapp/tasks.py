@@ -1,3 +1,4 @@
+from django.conf import settings
 from .models import Dashboard
 from celery import shared_task
 import pandas as pd
@@ -12,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 @shared_task
 def suggest_charts_task(model_id):
-    dataset_path = f"data/{model_id}.csv"
+    dataset_path = os.path.join(settings.DATA_DIR, f"{model_id}.csv")
     if not os.path.exists(dataset_path):
         logger.error(f"Dataset not found: {dataset_path}")
         raise FileNotFoundError(f"Dataset not found: {dataset_path}")
