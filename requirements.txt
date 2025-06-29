@@ -166,3 +166,6 @@ azure-mgmt-resource
 gunicorn==23.0.0
 psycopg2-binary==2.9.10
 django-storages[azure]
+channels>=4.0.0
+channels_redis>=4.0.0
+daphne>=4.0.0

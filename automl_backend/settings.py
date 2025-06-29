@@ -42,6 +42,7 @@ INSTALLED_APPS = [
     'automlapp',
     'aiapp',
     'corsheaders',
+    'channels',
 ]
 
 AUTH_USER_MODEL = 'automlapp.User'
@@ -86,6 +87,17 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'automl_backend.wsgi.application'
+
+ASGI_APPLICATION = 'automl_backend.asgi.application'
+
+CHANNEL_LAYERS = {
+    'default': {
+        'BACKEND': 'channels_redis.core.RedisChannelLayer',
+        'CONFIG': {
+            'hosts': [('127.0.0.1', 6379)],
+        },
+    },
+}
 
 
 # Database

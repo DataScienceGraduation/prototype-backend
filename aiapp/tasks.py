@@ -8,6 +8,8 @@ from automlapp.models import ModelEntry
 import logging
 from django.db import transaction
 from django.conf import settings
+from asgiref.sync import async_to_sync
+from channels.layers import get_channel_layer
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +45,16 @@ def suggest_charts_task(model_id):
         dashboard.description = model_entry.description
         dashboard.save(update_fields=["charts", "status", "title", "description"])
         logger.info(f"Dashboard status set to 'completed' for model {model_id}")
+
+        # Notify via WebSocket
+        channel_layer = get_channel_layer()
+        async_to_sync(channel_layer.group_send)(
+            f"dashboard_{model_id}",
+            {
+                "type": "dashboard_ready",
+                "model_id": model_id,
+            }
+        )
         return charts
     except ModelEntry.DoesNotExist:
         logger.error(f"ModelEntry with id {model_id} does not exist.")
