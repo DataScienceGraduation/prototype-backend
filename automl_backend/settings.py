@@ -113,11 +113,16 @@ if ENV == 'production':
     AZURE_CONTAINER = os.getenv('AZURE_CONTAINER')
     AZURE_URL = f'https://{AZURE_ACCOUNT_NAME}.blob.core.windows.net/'
 
-    # Static and media files storage
-    DEFAULT_FILE_STORAGE = 'storages.backends.azure_storage.AzureStorage'
-    STATICFILES_STORAGE = 'storages.backends.azure_storage.AzureStorage'
-    
-    # Define the locations for data, models, and pipelines in Azure
+    STORAGES = {
+        'default': {
+            'BACKEND': 'storages.backends.azure_storage.AzureStorage',
+            'OPTIONS': {
+                'azure_connection_string': f'DefaultEndpointsProtocol=https;AccountName={AZURE_ACCOUNT_NAME};AccountKey={AZURE_ACCOUNT_KEY};EndpointSuffix=core.windows.net',
+                'azure_container': AZURE_CONTAINER,
+            },
+        },
+    }
+
     AZURE_DATA_LOCATION = 'data'
     AZURE_MODELS_LOCATION = 'models'
     AZURE_PIPELINES_LOCATION = 'pipelines'
