@@ -543,7 +543,10 @@ def infer(request):
             df = pl.transform(df)
 
             df.drop(entry.target_variable, axis=1, inplace=True)
-            prediction = model.predict(df)
+            if hasattr(model, 'labels_'):  # likely DBSCAN or other unsupervised clustering
+                prediction = model.labels_
+            elif hasattr(model, 'predict'):
+                prediction = model.predict(df)
             print(f"Prediction: {prediction}")
             finalPrediction = prediction[0]
             # Always return the raw model output
@@ -672,7 +675,10 @@ def batchPredict(request):
             return JsonResponse({'success': False, 'message': f'Error in preprocessing: {str(e)}'}, status=400)
         # Predict
         try:
-            preds = model.predict(processed)
+            if hasattr(model, 'labels_'):  # likely DBSCAN or other unsupervised clustering
+                preds = model.labels_
+            elif hasattr(model, 'predict'):
+                preds = model.predict(processed)
             # Always return the raw model output
             df['prediction'] = preds
         except Exception as e:

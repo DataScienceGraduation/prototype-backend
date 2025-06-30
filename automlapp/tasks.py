@@ -101,7 +101,10 @@ def train_model_task(entry_id):
             
             # Get the optimal model and calculate custom score
             model = optimizer.get_optimal_model()
-            labels = model.predict(df_transformed)
+            if hasattr(model, 'labels_'):  # likely DBSCAN or other unsupervised clustering
+                labels = model.labels_
+            elif hasattr(model, 'predict'):
+                labels = model.predict(df_transformed)
             custom_score, silhouette, davies_bouldin = calculate_clustering_score(labels, df_transformed)
             metric_value = custom_score
             
