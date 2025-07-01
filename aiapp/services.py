@@ -14,6 +14,8 @@ from celery import shared_task
 from google.generativeai.types import GenerationConfig
 import matplotlib.pyplot as plt
 import re  # Add this at the top if not present
+from asgiref.sync import async_to_sync
+from channels.layers import get_channel_layer
 
 # Try to import kaleido and configure it
 try:
@@ -327,6 +329,17 @@ class ReportGenerationService:
             report.progress_percentage = 100
             report.current_step = 'Report generation completed'
             report.save()
+
+            # WebSocket notification for report completion (if async)
+            if task_instance and hasattr(task_instance, 'request') and hasattr(task_instance.request, 'id'):
+                channel_layer = get_channel_layer()
+                async_to_sync(channel_layer.group_send)(
+                    f"report_{task_instance.request.id}",
+                    {
+                        "type": "report_ready",
+                        "report_id": report.id,
+                    }
+                )
 
             update_progress(100, 'Report generation completed')
             return report
