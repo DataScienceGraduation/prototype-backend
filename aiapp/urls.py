@@ -21,4 +21,6 @@ urlpatterns = [
     # Data profiling endpoints
     path('dataprofile/', views.dataprofile, name='dataprofile'),
     path('delete-dataprofile/', views.delete_dataprofile, name='delete_dataprofile'),
+
+    path('get-latest-report-for-model/', views.get_latest_report_for_model, name='get_latest_report_for_model'),
 ]
