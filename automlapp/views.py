@@ -206,8 +206,12 @@ def loadData(request):
                 features[column] = 'constant'
                 logger.debug(f"Column '{column}' has constant values")
             elif unique_values < 10:
-                features[column] = [x for x in df[column].unique()]
-                logger.debug(f"Column '{column}' has {unique_values} categorical values")
+                unique_vals = []
+                for x in df[column].unique():
+                    if pd.notna(x):
+                        unique_vals.append(str(x))
+                features[column] = unique_vals
+                logger.debug(f"Column '{column}' has {len(unique_vals)} categorical values (excluding nan)")
             elif df[column].dtype == 'object':
                 features[column] = 'categorical'
             elif df[column].dtype == 'int64':
@@ -259,6 +263,7 @@ def loadData(request):
         return JsonResponse({
             'success': True, 
             'features': feature_names, 
+            'list_of_features': features,
             'data': suggested_target_variables, 
             'datetime_columns': datetime_columns, 
             'id': entry.id
@@ -525,33 +530,81 @@ def infer(request):
             file_path = f'data/{entry.id}.csv'
             with default_storage.open(file_path) as f:
                 df2 = pd.read_csv(f)
-            target_variable_first_value = df2[entry.target_variable].iloc[0]
+            # Check if target variable is set
+            if not entry.target_variable or entry.target_variable.strip() == '':
+                target_variable_first_value = None
+            else:
+                target_variable_first_value = df2[entry.target_variable].iloc[0]
 
             for key, value in data.items():
-                if key == entry.target_variable:
+                if key == entry.target_variable and target_variable_first_value is not None:
                     data[key] = target_variable_first_value
-                    print(data[key])
-                print(key, data[key])
                 if key in list_of_features:
                     if list_of_features[key] == 'integer':
-                        data[key] = int(value)
+                        try:
+                            data[key] = int(value)
+                        except (ValueError, TypeError):
+                            pass
                     elif list_of_features[key] == 'float':
-                        data[key] = float(value)
+                        try:
+                            data[key] = float(value)
+                        except (ValueError, TypeError):
+                            pass
+                    elif isinstance(list_of_features[key], list):
+                        data[key] = str(value)
+                    else:
+                        data[key] = str(value)
 
             df = pd.DataFrame([data])
-            df[entry.target_variable] = target_variable_first_value
-            df = pl.transform(df)
+            
+            # For clustering tasks, we don't need a target variable
+            if entry.task == 'Clustering':
+                pass
+            elif not entry.target_variable or entry.target_variable.strip() == '':
+                # For non-clustering tasks, try to infer target variable if needed
+                input_columns = list(data.keys())
+                dataset_columns = df2.columns.tolist()
+                potential_targets = [col for col in dataset_columns if col not in input_columns]
+                
+                if potential_targets:
+                    inferred_target = potential_targets[0]
+                    df[inferred_target] = df2[inferred_target].iloc[0]
+            elif target_variable_first_value is not None:
+                df[entry.target_variable] = target_variable_first_value
+            
+                        # Apply pipeline transformation
+            try:
+                df = pl.transform(df)
+            except Exception as e:
+                # For clustering tasks, if pipeline fails due to target variable issues,
+                # we can try to use the raw data directly
+                if entry.task == 'Clustering' and ("not found in axis" in str(e) or "[''] not found in axis" in str(e)):
+                    pass
+                else:
+                    raise e
 
-            df.drop(entry.target_variable, axis=1, inplace=True)
+            # Drop target variable if needed
+            if entry.task == 'Clustering':
+                pass
+            elif entry.target_variable and entry.target_variable.strip() != '' and entry.target_variable in df.columns:
+                df.drop(entry.target_variable, axis=1, inplace=True)
+
+            # Make prediction
             prediction = model.predict(df)
             print(f"Prediction: {prediction}")
             finalPrediction = prediction[0]
-            # Always return the raw model output
+            
+            # Convert NumPy types to Python types for JSON serialization
+            if hasattr(finalPrediction, 'item'):
+                finalPrediction = finalPrediction.item()
+            else:
+                finalPrediction = int(finalPrediction)
+            
+            # Return the prediction
             return JsonResponse({'success': True, 'prediction': finalPrediction}, status=200)
     except Exception as e:
         if '0 sample' in str(e):
             return JsonResponse({'success': False, 'message': 'Provided Row is an outlier'}, status=400)
-        print(f"Error in inference: {e}")
         return JsonResponse({'success': False, 'message': 'There was an error'}, status=500)
 
 @csrf_exempt
