@@ -732,3 +732,40 @@ def delete_dataprofile(request):
             'success': False,
             'message': f'Error deleting data profile: {str(e)}'
         }, status=500)
+
+
+@csrf_exempt
+@require_GET
+@jwt_authenticated
+def get_latest_report_for_model(request):
+    """
+    Get the latest report for a given model (if any) for the authenticated user.
+    GET with ?model_id=... Returns the latest report or 404 if none exists.
+    """
+    try:
+        model_id = request.GET.get('model_id')
+        if not model_id:
+            return JsonResponse({'success': False, 'message': 'model_id is required'}, status=400)
+        user = User.objects.get(username=request.jwt_payload['username'])
+        # Check user has access to this model
+        if not user.models.filter(id=model_id).exists():
+            return JsonResponse({'success': False, 'message': 'Model not found or access denied'}, status=404)
+        # Get latest report for this model
+        report = Report.objects.filter(model_entry_id=model_id).order_by('-created_at').first()
+        if not report:
+            return JsonResponse({'success': False, 'message': 'No report found for this model'}, status=404)
+        # Return minimal info (id, status, created_at, title, etc.)
+        return JsonResponse({
+            'success': True,
+            'report': {
+                'id': report.id,
+                'title': report.title,
+                'status': report.status,
+                'created_at': report.created_at.isoformat(),
+                'updated_at': report.updated_at.isoformat(),
+                'report_type': report.report_type,
+            }
+        }, status=200)
+    except Exception as e:
+        logger.error(f"Error getting latest report for model: {e}")
+        return JsonResponse({'success': False, 'message': 'Error retrieving latest report'}, status=500)
