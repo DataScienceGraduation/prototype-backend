@@ -768,4 +768,91 @@ def get_latest_report_for_model(request):
         }, status=200)
     except Exception as e:
         logger.error(f"Error getting latest report for model: {e}")
-        return JsonResponse({'success': False, 'message': 'Error retrieving latest report'}, status=500)
+        return JsonResponse({
+            'success': False,
+            'message': 'Error retrieving latest report for model'
+        }, status=500)
+
+
+@csrf_exempt
+@require_POST
+@jwt_authenticated
+def share_model(request):
+    """
+    Shares a model with another user by adding it to their accessible models.
+
+    Expected POST data:
+    - model_id: ID of the ModelEntry to share
+    - email: Email of the user to share the model with
+    """
+    try:
+        data = json.loads(request.body)
+        model_id = data.get('model_id')
+        target_email = data.get('email')
+
+        if not model_id or not target_email:
+            return JsonResponse({
+                'success': False,
+                'message': 'model_id and email are required'
+            }, status=400)
+
+        # Get the current user (sharer)
+        sharer_user = User.objects.get(username=request.jwt_payload['username'])
+
+        # Verify the sharer has access to the model
+        try:
+            model_entry = ModelEntry.objects.get(id=model_id)
+            if not sharer_user.models.filter(id=model_id).exists():
+                return JsonResponse({
+                    'success': False,
+                    'message': 'Model not found or access denied for sharing'
+                }, status=403) # 403 Forbidden if sharer doesn't own or have access
+        except ModelEntry.DoesNotExist:
+            return JsonResponse({
+                'success': False,
+                'message': 'Model not found'
+            }, status=404)
+
+        # Find the target user by email
+        try:
+            target_user = User.objects.get(email=target_email)
+        except User.DoesNotExist:
+            return JsonResponse({
+                'success': False,
+                'message': 'Target user with this email does not exist'
+            }, status=404)
+
+        # Prevent sharing with self
+        if sharer_user.id == target_user.id:
+            return JsonResponse({
+                'success': False,
+                'message': 'Cannot share a model with yourself'
+            }, status=400)
+
+        # Add the model to the target user's accessible models
+        # Check if the model is already shared with the target user
+        if target_user.models.filter(id=model_id).exists():
+            return JsonResponse({
+                'success': False,
+                'message': 'Model already shared with this user'
+            }, status=409) # 409 Conflict if already shared
+
+        target_user.models.add(model_entry)
+        target_user.save()
+
+        return JsonResponse({
+            'success': True,
+            'message': 'Model shared successfully!'
+        }, status=200)
+
+    except User.DoesNotExist:
+        return JsonResponse({
+            'success': False,
+            'message': 'Authentication error: User not found.'
+        }, status=401)
+    except Exception as e:
+        logger.error(f"Error sharing model: {e}")
+        return JsonResponse({
+            'success': False,
+            'message': f'An unexpected error occurred: {str(e)}'
+        }, status=500)

@@ -23,4 +23,5 @@ urlpatterns = [
     path('delete-dataprofile/', views.delete_dataprofile, name='delete_dataprofile'),
 
     path('get-latest-report-for-model/', views.get_latest_report_for_model, name='get_latest_report_for_model'),
+    path('share-model/', views.share_model, name='share_model'),
 ]
