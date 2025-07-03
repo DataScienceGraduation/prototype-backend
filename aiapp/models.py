@@ -20,13 +20,13 @@ class Report(models.Model):
     ai_insights = models.TextField(blank=True, help_text="AI-generated insights from Gemini")
 
     # Report metadata
-    report_type = models.CharField(max_length=50, default='analysis')  # analysis, performance, data_quality
-    status = models.CharField(max_length=20, default='pending')  # pending, generating, completed, failed
+    report_type = models.CharField(max_length=255, default='analysis')  # analysis, performance, data_quality
+    status = models.CharField(max_length=255, default='pending')  # pending, generating, completed, failed
 
     # Progress tracking for Celery tasks
     task_id = models.CharField(max_length=255, blank=True, null=True, help_text="Celery task ID")
     progress_percentage = models.IntegerField(default=0, help_text="Progress percentage (0-100)")
-    current_step = models.CharField(max_length=200, blank=True, help_text="Current processing step")
+    current_step = models.CharField(max_length=255, blank=True, help_text="Current processing step")
 
     class Meta:
         ordering = ['-created_at']
@@ -51,7 +51,7 @@ class ChartData(models.Model):
 
     id = models.AutoField(primary_key=True)
     report = models.ForeignKey(Report, on_delete=models.CASCADE, related_name='charts')
-    chart_type = models.CharField(max_length=20, choices=CHART_TYPES)
+    chart_type = models.CharField(max_length=255, choices=CHART_TYPES)
     title = models.CharField(max_length=255)
     description = models.TextField(blank=True)
 
@@ -109,7 +109,7 @@ class DataInsight(models.Model):
 
     id = models.AutoField(primary_key=True)
     report = models.ForeignKey(Report, on_delete=models.CASCADE, related_name='insights')
-    insight_type = models.CharField(max_length=30, choices=INSIGHT_TYPES)
+    insight_type = models.CharField(max_length=255, choices=INSIGHT_TYPES)
     title = models.CharField(max_length=255)
     description = models.TextField()
 
@@ -158,7 +158,7 @@ class Dashboard(models.Model):
     title = models.CharField(max_length=255, blank=True, default="")
     description = models.TextField(blank=True, default="")
     charts = models.JSONField(default=list, help_text="Chart suggestions for this model")
-    status = models.CharField(max_length=20, default="pending", help_text="Dashboard generation status: pending, generating, completed, failed")
+    status = models.CharField(max_length=255, default="pending", help_text="Dashboard generation status: pending, generating, completed, failed")
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
