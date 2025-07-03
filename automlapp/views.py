@@ -138,140 +138,112 @@ def register(request):
 
 
 
+def _process_uploaded_data(file_obj, user):
+    """
+    Reusable function to process uploaded data, whether from a file or a database.
+    """
+    logger.info(f"Processing data for user: {user.username}")
+    
+    try:
+        df = pd.read_csv(file_obj)
+        if df.empty:
+            logger.error("Uploaded data is empty")
+            return JsonResponse({'success': False, 'message': 'The uploaded data is empty'}, status=400)
+    except Exception as e:
+        logger.error(f"Failed to parse data: {str(e)}")
+        return JsonResponse({'success': False, 'message': f'Error parsing your data: {str(e)}'}, status=400)
+    
+    # Analyze columns (same logic as before)
+    columns = list(df.columns)
+    suggested_target_variables = []
+    features = {}
+    datetime_columns = []
+    
+    logger.info(f"Analyzing {len(columns)} columns from dataset with {len(df)} rows")
+    
+    for column in columns:
+        if df[column].dtype == 'object':
+            try:
+                parsed_col = pd.to_datetime(df[column], errors='coerce')
+                valid_ratio = parsed_col.notna().sum() / len(df[column])
+                if valid_ratio > 0.8:
+                    datetime_columns.append(column)
+                    features[column] = 'datetime'
+            except Exception:
+                pass
+    
+    for column in columns:
+        if column in datetime_columns:
+            continue
+        unique_values = df[column].nunique()
+        total_rows = len(df)
+        suggested_target_variables.append(column)
+        
+        if unique_values == total_rows and unique_values > 1:
+            features[column] = 'unique'
+        elif unique_values == 1:
+            features[column] = 'constant'
+        elif unique_values < 10:
+            features[column] = [str(x) for x in df[column].unique() if pd.notna(x)]
+        elif df[column].dtype == 'object':
+            features[column] = 'categorical'
+        elif df[column].dtype in ['int64', 'float64']:
+            features[column] = 'numerical'
+        else:
+            features[column] = 'unknown'
+
+    # Create model entry
+    try:
+        entry = ModelEntry.objects.create(
+            name="",
+            description="",
+            task="",
+            target_variable="",
+            list_of_features=features,
+            status='Data Loaded',
+            model_name="",
+            evaluation_metric="",
+            evaluation_metric_value=0
+        )
+        user.models.add(entry)
+        
+        file_path = f'data/{entry.id}.csv'
+        csv_buffer = io.StringIO()
+        df.to_csv(csv_buffer, index=False)
+        default_storage.save(file_path, ContentFile(csv_buffer.getvalue().encode('utf-8')))
+        
+        entry.save()
+        logger.info(f"Model entry created with ID: {entry.id}")
+        
+        return JsonResponse({
+            'success': True, 
+            'features': list(features.keys()), 
+            'list_of_features': features,
+            'data': suggested_target_variables, 
+            'datetime_columns': datetime_columns, 
+            'id': entry.id
+        }, status=200)
+
+    except Exception as e:
+        logger.error(f"Failed to create model entry: {str(e)}")
+        return JsonResponse({'success': False, 'message': f'Database error: {str(e)}'}, status=500)
+
+
 @csrf_exempt
 @require_POST
 @jwt_authenticated
 def loadData(request):
     """
     Load data from a CSV file, analyze columns, and create a model entry.
-    Returns column information and suggested target variables.
     """
-    try:
-        # Validate request has file
-        if 'file' not in request.FILES:
-            logger.error("No file provided in request")
-            return JsonResponse({'success': False, 'message': 'No file provided'}, status=400)
-            
-        file_obj = request.FILES['file']
-        logger.info(f"Processing file: {file_obj.name}, size: {file_obj.size} bytes")
-        
-        # Parse CSV file
-        try:
-            df = pd.read_csv(file_obj)
-            if df.empty:
-                logger.error("Uploaded CSV file is empty")
-                return JsonResponse({'success': False, 'message': 'The uploaded file is empty'}, status=400)
-        except Exception as e:
-            logger.error(f"Failed to parse CSV file: {str(e)}")
-            return JsonResponse({'success': False, 'message': f'Error parsing your file: {str(e)}'}, status=400)
-        
-        # Analyze columns
-        columns = list(df.columns)
-        suggested_target_variables = []
-        features = {}
-        datetime_columns = []
-        
-        logger.info(f"Analyzing {len(columns)} columns from dataset with {len(df)} rows")
-        
-        # First pass: identify datetime columns
-        for column in columns:
-            if df[column].dtype == 'object':
-                try:
-                    parsed_col = pd.to_datetime(df[column], errors='coerce')
-                    valid_ratio = parsed_col.notna().sum() / len(df[column])
-                    if valid_ratio > 0.8:
-                        datetime_columns.append(column)
-                        features[column] = 'datetime'
-                        logger.info(f"Column '{column}' identified as datetime ({valid_ratio:.2%} valid dates)")
-                except Exception as e:
-                    logger.debug(f"Error parsing column '{column}' as datetime: {str(e)}")
-        
-        # Second pass: analyze other columns
-        for column in columns:
-            # Skip already identified datetime columns
-            if column in datetime_columns:
-                continue
-                
-            unique_values = df[column].nunique()
-            total_rows = len(df)
-            suggested_target_variables.append(column)
-            
-            logger.debug(f"Column '{column}': {unique_values} unique values, dtype: {df[column].dtype}")
-            
-            # Determine column type
-            if unique_values == total_rows and unique_values > 1:
-                features[column] = 'unique'
-                logger.debug(f"Column '{column}' has unique values (potential ID column)")
-            elif unique_values == 1:
-                features[column] = 'constant'
-                logger.debug(f"Column '{column}' has constant values")
-            elif unique_values < 10:
-                unique_vals = []
-                for x in df[column].unique():
-                    if pd.notna(x):
-                        unique_vals.append(str(x))
-                features[column] = unique_vals
-                logger.debug(f"Column '{column}' has {len(unique_vals)} categorical values (excluding nan)")
-            elif df[column].dtype == 'object':
-                features[column] = 'categorical'
-            elif df[column].dtype == 'int64':
-                features[column] = 'integer'
-            elif df[column].dtype == 'float64':
-                features[column] = 'float'
-            else:
-                features[column] = 'unknown'
-                logger.warning(f"Column '{column}' has unrecognized type: {df[column].dtype}")
-        
-        # Create model entry
-        logger.info("Creating model entry in database")
-        username = request.jwt_payload['username']
-        
-        try:
-            entry = ModelEntry.objects.create(
-                name="",
-                description="",
-                task="",
-                target_variable="",
-                list_of_features=features,
-                status='Data Loaded',
-                model_name="",
-                evaluation_metric="",
-                evaluation_metric_value=0
-            )
-            
-            # Associate entry with user
-            user = User.objects.get(username=username)
-            user.models.add(entry)
-            
-            # Save CSV file
-            file_path = f'data/{entry.id}.csv'
-            csv_buffer = io.StringIO()
-            df.to_csv(csv_buffer, index=False)
-            default_storage.save(file_path, ContentFile(csv_buffer.getvalue().encode('utf-8')))
-            logger.info(f"Dataset saved to {file_path}")
-            
-            entry.save()
-            logger.info(f"Model entry created with ID: {entry.id}")
-        except Exception as e:
-            logger.error(f"Failed to create model entry: {str(e)}")
-            return JsonResponse({'success': False, 'message': f'Database error: {str(e)}'}, status=500)
-        
-        feature_names = list(features.keys())
-        logger.info(f"Data loading completed successfully. Found {len(feature_names)} features, "
-                   f"{len(datetime_columns)} datetime columns")
-        
-        return JsonResponse({
-            'success': True, 
-            'features': feature_names, 
-            'list_of_features': features,
-            'data': suggested_target_variables, 
-            'datetime_columns': datetime_columns, 
-            'id': entry.id
-        }, status=200)
-        
-    except Exception as e:
-        logger.exception(f"Unexpected error in loadData: {str(e)}")
-        return JsonResponse({'success': False, 'message': f'There was an error: {str(e)}'}, status=500)
+    if 'file' not in request.FILES:
+        return JsonResponse({'success': False, 'message': 'No file provided'}, status=400)
+    
+    file_obj = request.FILES['file']
+    username = request.jwt_payload['username']
+    user = User.objects.get(username=username)
+    
+    return _process_uploaded_data(file_obj, user)
 
 
 @csrf_exempt

@@ -5,11 +5,13 @@ from rest_framework.decorators import action
 from sqlalchemy import create_engine, inspect
 import pandas as pd
 from django.core.files.base import ContentFile
-from django.core.files.storage import default_storage
 import io
-from .views import loadData 
+from .views import _process_uploaded_data
+from .authentication import JWTAuthentication
 
 class DBConnectionViewSet(viewsets.ViewSet):
+    authentication_classes = [JWTAuthentication]
+
     @action(detail=False, methods=['post'])
     def test_connection(self, request):
         db_details = request.data
@@ -67,22 +69,10 @@ class DBConnectionViewSet(viewsets.ViewSet):
             
             csv_buffer = io.StringIO()
             df.to_csv(csv_buffer, index=False)
+            csv_buffer.seek(0)
             
-            # Create a ContentFile to simulate a file upload
-            csv_file = ContentFile(csv_buffer.getvalue().encode('utf-8'), name=f"{table_name}.csv")
-            
-            # Create a mock request object for loadData
-            from django.http import HttpRequest
-            from django.core.files.uploadedfile import InMemoryUploadedFile
-
-            mock_request = HttpRequest()
-            mock_request.method = 'POST'
-            mock_request.FILES['file'] = InMemoryUploadedFile(csv_file, 'file', f"{table_name}.csv", 'text/csv', len(csv_buffer.getvalue()), None)
-            mock_request.jwt_payload = request.jwt_payload
-
-            # Call the existing loadData view
-            response = loadData(mock_request)
-            return response
+            # Use the refactored function
+            return _process_uploaded_data(csv_buffer, request.user)
 
         except Exception as e:
             return Response({'success': False, 'message': str(e)}, status=status.HTTP_400_BAD_REQUEST)
