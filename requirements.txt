@@ -164,6 +164,7 @@ azure-mgmt-compute
 azure-mgmt-network
 azure-mgmt-resource
 gunicorn==23.0.0
+djangorestframework==3.16.0
 SQLAlchemy==2.0.41
 psycopg2-binary==2.9.10
 django-storages[azure]
