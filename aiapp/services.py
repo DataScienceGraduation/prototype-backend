@@ -553,7 +553,7 @@ class ReportGenerationService:
                     logger.warning(f"Skipping incomplete chart suggestion: {suggestion}")
                     continue
 
-                max_attempts = 2
+                max_attempts = 5
                 attempt = 0
                 success = False
                 last_error = None

@@ -856,3 +856,42 @@ def share_model(request):
             'success': False,
             'message': f'An unexpected error occurred: {str(e)}'
         }, status=500)
+
+@csrf_exempt
+@require_POST
+@jwt_authenticated
+def regenerate_report(request):
+    """
+    Regenerate a report for a given report_id.
+    This will delete the existing report and start a new generation task.
+    """
+    try:
+        report_id = request.GET.get('report_id')
+        if not report_id:
+            return JsonResponse({'success': False, 'message': 'report_id is required'}, status=400)
+
+        user = User.objects.get(username=request.jwt_payload['username'])
+        report = Report.objects.get(id=report_id)
+
+        if not user.models.filter(id=report.model_entry.id).exists():
+            return JsonResponse({'success': False, 'message': 'Report not found or access denied'}, status=404)
+
+        model_id = report.model_entry.id
+        report_type = report.report_type
+
+        report.delete()
+
+        # Generate report asynchronously using Celery
+        task = generate_report_async.delay(model_id, report_type)
+
+        return JsonResponse({
+            'success': True,
+            'task_id': task.id,
+            'message': 'Report regeneration started',
+        }, status=202)
+
+    except Report.DoesNotExist:
+        return JsonResponse({'success': False, 'message': 'Report not found'}, status=404)
+    except Exception as e:
+        logger.error(f"Error regenerating report: {e}")
+        return JsonResponse({'success': False, 'message': 'Error regenerating report'}, status=500)
