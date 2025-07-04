@@ -4,7 +4,7 @@ from rest_framework.decorators import api_view, permission_classes, authenticati
 from rest_framework.permissions import IsAuthenticated
 from .models import APIKey, ModelEntry, User
 from .serializers import APIKeySerializer
-from .authentication import APIKeyAuthentication
+from .authentication import APIKeyAuthentication, JWTAuthentication
 import joblib
 import pandas as pd
 import json
@@ -13,6 +13,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+@authentication_classes([JWTAuthentication])
 class APIKeyViewSet(viewsets.ModelViewSet):
     serializer_class = APIKeySerializer
     permission_classes = [permissions.IsAuthenticated]
