@@ -35,6 +35,3 @@ COPY entrypoint.sh /app/entrypoint.sh
 
 # Run entrypoint script
 ENTRYPOINT ["/app/entrypoint.sh"]
-
-CMD ["gunicorn", "automl_backend.wsgi:application", "--bind", "0.0.0.0:8000"]
-
