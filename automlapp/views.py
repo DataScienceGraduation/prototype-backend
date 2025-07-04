@@ -444,44 +444,69 @@ def getModel(request):
 @require_POST
 @jwt_authenticated
 def infer(request):
+    """
+    Perform inference using a trained model.
+    This function handles both single predictions and time series forecasting.
+    """
+    logger.info(f"Received inference request from user: {request.jwt_payload['username']}")
+    
     try:
         data = request.POST
-        if not User.objects.filter(models=data['id']).exists():
-            return JsonResponse({'success': False, 'message': 'Model not found'}, status=404)
-        entry = ModelEntry.objects.get(id=data['id'])
-        model_path = f'models/{entry.id}.pkl'
-        pipeline_path = f'pipelines/{entry.id}.pkl'
-        with default_storage.open(model_path) as f:
-            model = joblib.load(f)
-        with default_storage.open(pipeline_path) as f:
-            pl = joblib.load(f)
-        data = json.loads(data['data'])
-        print(data)
+        model_id = data.get('id')
 
+        if not model_id:
+            logger.warning("Missing model ID in inference request")
+            return JsonResponse({'success': False, 'message': 'Model ID is required'}, status=400)
+
+        logger.info(f"Initiating inference for model ID: {model_id}")
+
+        # Verify user has access to the model
+        username = request.jwt_payload['username']
+        user = User.objects.get(username=username)
+        if not user.models.filter(id=model_id).exists():
+            logger.warning(f"User {username} attempted to access unauthorized model ID: {model_id}")
+            return JsonResponse({'success': False, 'message': 'Model not found or access denied'}, status=404)
+
+        # Fetch model entry
+        entry = ModelEntry.objects.get(id=model_id)
+        logger.info(f"Found model '{entry.name}' (Task: {entry.task})")
+
+        # Load model and pipeline
+        try:
+            model_path = f'models/{entry.id}.pkl'
+            pipeline_path = f'pipelines/{entry.id}.pkl'
+            
+            with default_storage.open(model_path) as f:
+                model = joblib.load(f)
+            with default_storage.open(pipeline_path) as f:
+                pl = joblib.load(f)
+            
+            logger.info(f"Successfully loaded model and pipeline for model ID: {model_id}")
+
+        except FileNotFoundError:
+            logger.error(f"Model or pipeline file not found for model ID: {model_id}")
+            return JsonResponse({'success': False, 'message': 'Model files not found. Please retrain the model.'}, status=404)
+
+        # Handle Time Series Forecasting
         if entry.task == 'TimeSeries':
-            # For time series, we don't need input data - just forecast horizon
-            forecast_horizon = int(request.POST.get('forecast_horizon', 1))
             try:
+                forecast_horizon = int(data.get('forecast_horizon', 1))
+                logger.info(f"Performing time series forecast with horizon: {forecast_horizon}")
+                
                 prediction = model.forecast(steps=forecast_horizon)
 
-                # Convert prediction to list format
                 if isinstance(prediction, pd.Series):
                     predictions_list = prediction.tolist()
                 else:
                     predictions_list = prediction.iloc[:, 0].tolist() if len(prediction.shape) > 1 else prediction.tolist()
 
-                # Round predictions to 2 decimal places
                 predictions_list = [round(pred, 2) for pred in predictions_list]
+                
+                logger.info(f"Successfully generated {len(predictions_list)} forecasts")
 
-                # Return response - only include plot for multiple timesteps
                 if forecast_horizon == 1:
-                    finalPrediction = predictions_list[0]
-                    return JsonResponse({
-                        'success': True,
-                        'prediction': str(finalPrediction)
-                    }, status=200)
+                    return JsonResponse({'success': True, 'prediction': str(predictions_list[0])}, status=200)
                 else:
-                    # Generate plot only for multiple timesteps
                     plot_base64 = generate_timeseries_plot(predictions_list, forecast_horizon, entry.target_variable)
                     return JsonResponse({
                         'success': True,
@@ -489,95 +514,63 @@ def infer(request):
                         'forecast_horizon': forecast_horizon,
                         'plot': plot_base64
                     }, status=200)
+
             except Exception as e:
-                print(f"Error in forecasting: {e}")
-                return JsonResponse({
-                    'success': False,
-                    'message': f'Error in forecasting: {str(e)}'
-                }, status=400)
+                logger.exception(f"Error during time series forecasting for model ID {model_id}: {e}")
+                return JsonResponse({'success': False, 'message': f'Error in forecasting: {str(e)}'}, status=500)
+
+        # Handle other task types (Classification, Regression, Clustering)
         else:
-            # For non-time series models, process the input data
-            list_of_features = ast.literal_eval(entry.list_of_features)
-            print(list_of_features)
-            file_path = f'data/{entry.id}.csv'
-            with default_storage.open(file_path) as f:
-                df2 = pd.read_csv(f)
-            # Check if target variable is set
-            if not entry.target_variable or entry.target_variable.strip() == '':
-                target_variable_first_value = None
-            else:
-                target_variable_first_value = df2[entry.target_variable].iloc[0]
-
-            for key, value in data.items():
-                if key == entry.target_variable and target_variable_first_value is not None:
-                    data[key] = target_variable_first_value
-                if key in list_of_features:
-                    if list_of_features[key] == 'integer':
-                        try:
-                            data[key] = int(value)
-                        except (ValueError, TypeError):
-                            pass
-                    elif list_of_features[key] == 'float':
-                        try:
-                            data[key] = float(value)
-                        except (ValueError, TypeError):
-                            pass
-                    elif isinstance(list_of_features[key], list):
-                        data[key] = str(value)
-                    else:
-                        data[key] = str(value)
-
-            df = pd.DataFrame([data])
-            
-            # For clustering tasks, we don't need a target variable
-            if entry.task == 'Clustering':
-                pass
-            elif not entry.target_variable or entry.target_variable.strip() == '':
-                # For non-clustering tasks, try to infer target variable if needed
-                input_columns = list(data.keys())
-                dataset_columns = df2.columns.tolist()
-                potential_targets = [col for col in dataset_columns if col not in input_columns]
-                
-                if potential_targets:
-                    inferred_target = potential_targets[0]
-                    df[inferred_target] = df2[inferred_target].iloc[0]
-            elif target_variable_first_value is not None:
-                df[entry.target_variable] = target_variable_first_value
-            
-                        # Apply pipeline transformation
             try:
-                df = pl.transform(df)
+                input_data = json.loads(data.get('data', '{}'))
+                if not input_data:
+                    logger.warning("No data provided for inference")
+                    return JsonResponse({'success': False, 'message': 'No data provided for inference'}, status=400)
+
+                logger.info(f"Received input data for inference: {input_data}")
+                
+                df = pd.DataFrame([input_data])
+                
+                # Preprocess data using the pipeline
+                try:
+                    processed_df = pl.transform(df)
+                    logger.info("Successfully transformed input data with pipeline")
+                except Exception as e:
+                    logger.error(f"Error transforming data for model ID {model_id}: {e}")
+                    return JsonResponse({'success': False, 'message': f'Error in data transformation: {str(e)}'}, status=400)
+
+                # Make prediction
+                try:
+                    prediction = model.predict(processed_df)
+                    final_prediction = prediction[0]
+                    
+                    if hasattr(final_prediction, 'item'):
+                        final_prediction = final_prediction.item()
+                    
+                    logger.info(f"Successfully made prediction: {final_prediction}")
+                    return JsonResponse({'success': True, 'prediction': final_prediction}, status=200)
+
+                except Exception as e:
+                    logger.error(f"Error during prediction for model ID {model_id}: {e}")
+                    return JsonResponse({'success': False, 'message': f'Error during prediction: {str(e)}'}, status=500)
+
+            except json.JSONDecodeError:
+                logger.error("Invalid JSON format in 'data' field")
+                return JsonResponse({'success': False, 'message': 'Invalid JSON format in input data'}, status=400)
             except Exception as e:
-                # For clustering tasks, if pipeline fails due to target variable issues,
-                # we can try to use the raw data directly
-                if entry.task == 'Clustering' and ("not found in axis" in str(e) or "[''] not found in axis" in str(e)):
-                    pass
-                else:
-                    raise e
+                logger.exception(f"An unexpected error occurred during inference for model ID {model_id}: {e}")
+                return JsonResponse({'success': False, 'message': f'An unexpected error occurred: {str(e)}'}, status=500)
 
-            # Drop target variable if needed
-            if entry.task == 'Clustering':
-                pass
-            elif entry.target_variable and entry.target_variable.strip() != '' and entry.target_variable in df.columns:
-                df.drop(entry.target_variable, axis=1, inplace=True)
-
-            # Make prediction
-            prediction = model.predict(df)
-            print(f"Prediction: {prediction}")
-            finalPrediction = prediction[0]
-            
-            # Convert NumPy types to Python types for JSON serialization
-            if hasattr(finalPrediction, 'item'):
-                finalPrediction = finalPrediction.item()
-            else:
-                finalPrediction = int(finalPrediction)
-            
-            # Return the prediction
-            return JsonResponse({'success': True, 'prediction': finalPrediction}, status=200)
+    except User.DoesNotExist:
+        logger.error(f"Authenticated user not found in database: {request.jwt_payload.get('username')}")
+        return JsonResponse({'success': False, 'message': 'User not found'}, status=404)
+    except ModelEntry.DoesNotExist:
+        logger.error(f"Model with ID {model_id} not found in database")
+        return JsonResponse({'success': False, 'message': 'Model not found'}, status=404)
     except Exception as e:
-        if '0 sample' in str(e):
-            return JsonResponse({'success': False, 'message': 'Provided Row is an outlier'}, status=400)
-        return JsonResponse({'success': False, 'message': 'There was an error'}, status=500)
+        logger.exception(f"A critical unexpected error occurred in the infer view: {e}")
+        return JsonResponse({'success': False, 'message': 'An unexpected server error occurred'}, status=500)
+
 
 @csrf_exempt
 @require_POST
