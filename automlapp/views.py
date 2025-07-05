@@ -541,6 +541,10 @@ def infer(request):
 
                 # Make prediction
                 try:
+                    # Exclude target variable from prediction data
+                    if entry.target_variable in processed_df.columns:
+                        processed_df = processed_df.drop(columns=[entry.target_variable])
+                    
                     prediction = model.predict(processed_df)
                     final_prediction = prediction[0]
                     
