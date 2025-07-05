@@ -44,7 +44,7 @@ Celery handles background tasks, such as model training. Once Redis is running, 
 In a separate terminal window, activate the virtual environment and run the Celery worker for the `automl` app:
 
 ```bash
-celery -A automl worker --loglevel=info
+celery -A automlapp worker --loglevel=info
 ```
 
 ### Step 5: Make Migrations and Migrate the Database
