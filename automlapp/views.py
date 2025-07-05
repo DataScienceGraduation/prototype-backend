@@ -166,7 +166,7 @@ def _process_uploaded_data(file_obj, user):
             try:
                 parsed_col = pd.to_datetime(df[column], errors='coerce')
                 valid_ratio = parsed_col.notna().sum() / len(df[column])
-                if valid_ratio > 0.8:
+                if valid_ratio > 0.2:
                     datetime_columns.append(column)
                     features[column] = 'datetime'
             except Exception:
